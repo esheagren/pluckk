@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { lazy, Suspense, type JSX } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth, AUTH_CALLBACK_PATH, consumeReturnTo } from './hooks/useAuth';
 import { useCards } from './hooks/useCards';
@@ -12,7 +12,10 @@ import FocusPage from './pages/FocusPage';
 import LandingPage from './pages/LandingPage';
 import InfoPage from './pages/InfoPage';
 import PrivacyPage from './pages/PrivacyPage';
-import ArchitecturePage from './pages/ArchitecturePage';
+import AdminRoute from './pages/admin/AdminRoute';
+
+// Admin pages load only when an admin opens them.
+const ArchitecturePage = lazy(() => import('./pages/admin/ArchitecturePage'));
 
 // Loading Screen Component
 function LoadingScreen(): JSX.Element {
@@ -47,9 +50,6 @@ export default function App(): JSX.Element {
   if (location.pathname === '/privacy') {
     return <PrivacyPage />;
   }
-  if (location.pathname === '/architecture') {
-    return <ArchitecturePage />;
-  }
 
   // Show loading while checking auth (also covers the /auth/callback exchange)
   if (authLoading) {
@@ -64,6 +64,20 @@ export default function App(): JSX.Element {
   // Show landing page if not authenticated
   if (!user) {
     return <LandingPage onSignIn={signIn} />;
+  }
+
+  // Admin pages: full-screen, outside the app layout, and only for admins (the API decides).
+  if (location.pathname.startsWith('/admin/')) {
+    return (
+      <AdminRoute fallback={<LoadingScreen />}>
+        <Suspense fallback={<LoadingScreen />}>
+          <Routes>
+            <Route path="/admin/architecture" element={<ArchitecturePage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </AdminRoute>
+    );
   }
 
   // Authenticated - show main app
@@ -109,6 +123,7 @@ export default function App(): JSX.Element {
         />
         <Route path="/focus" element={<FocusPage />} />
         <Route path="/activity" element={<Navigate to="/profile" replace />} />
+        <Route path="/architecture" element={<Navigate to="/admin/architecture" replace />} />
       </Route>
       </Routes>
       </div>

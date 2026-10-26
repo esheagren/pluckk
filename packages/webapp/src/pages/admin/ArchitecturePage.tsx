@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type JSX } from 'react';
-import MermaidDiagram from '../components/MermaidDiagram';
+import MermaidDiagram from '../../components/MermaidDiagram';
 import { diagrams, cardFieldProcessing } from './architecture/diagrams';
-import { useTheme } from '../hooks/useTheme';
+import { useTheme } from '../../hooks/useTheme';
 
 const STORAGE_PREFIX = 'pluckk_arch_';
 
@@ -16,8 +16,8 @@ function saveOverride(id: string, source: string | null): void {
 }
 
 /**
- * /architecture — how Pluckk works, as editable UML (Mermaid).
- * Sources: src/pages/architecture/diagrams.ts. In-page edits persist per browser
+ * /admin/architecture — how Pluckk works, as editable UML (Mermaid). Admin-only (see AdminRoute).
+ * Sources: src/pages/admin/architecture/diagrams.ts. In-page edits persist per browser
  * until "Reset"; use "Copy" to paste a revised diagram back into a conversation.
  */
 export default function ArchitecturePage(): JSX.Element {
@@ -152,7 +152,7 @@ export default function ArchitecturePage(): JSX.Element {
         )}
 
         <footer className="mt-8 text-xs text-gray-400 dark:text-gray-500">
-          Sources: <code>packages/webapp/src/pages/architecture/diagrams.ts</code>. In-page edits are stored in this browser only.
+          Sources: <code>packages/webapp/src/pages/admin/architecture/diagrams.ts</code>. In-page edits are stored in this browser only.
         </footer>
       </div>
     </div>

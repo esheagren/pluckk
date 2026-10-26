@@ -196,7 +196,7 @@ export function createApiClient(opts: ApiClientOptions) {
 export type ApiClient = ReturnType<typeof createApiClient>;
 
 export interface UserMeResponse {
-  user: { id: string; email: string | null; displayName: string | null; avatarUrl: string | null; createdAt: string };
+  user: { id: string; email: string | null; displayName: string | null; avatarUrl: string | null; createdAt: string; isAdmin: boolean };
   settings: { mochiApiKey: string | null; mochiDeckId: string | null };
   learningProfile: Record<string, unknown> & { onboardingCompleted: boolean };
 }

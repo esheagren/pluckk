@@ -8,6 +8,17 @@ import { authenticateRequest, isAuthError } from '../../lib/auth.js';
 import { getDb, schema } from '../../lib/db.js';
 import type { UpdateUserSettingsRequest } from '../../lib/types.js';
 
+// Admins are named by email in the server-only ADMIN_EMAILS env var (comma-separated), so the
+// list never appears in the public repo or the webapp bundle.
+function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const admins = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return admins.includes(email.toLowerCase());
+}
+
 // Basic HTML tag sanitization to prevent XSS
 function sanitizeText(text: string | null | undefined): string | null {
   if (!text) return null;
@@ -42,7 +53,8 @@ export default async function handler(
         email: user.email,
         displayName: profile.displayName || null,
         avatarUrl: profile.avatarUrl || null,
-        createdAt: profile.createdAt
+        createdAt: profile.createdAt,
+        isAdmin: isAdminEmail(user.email)
       },
       settings: {
         mochiApiKey: profile.mochiApiKey || null,

@@ -89,21 +89,6 @@ export default function Sidebar(): JSX.Element {
           </svg>
           <span>About</span>
         </NavLink>
-        <NavLink to="/architecture" className={navLinkClass} reloadDocument>
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
-            <path d="M10 6.5h4a3 3 0 0 1 3 3V14M6.5 10v4a3 3 0 0 0 3 3H14"></path>
-          </svg>
-          <span>Architecture</span>
-        </NavLink>
         <NavLink to="/profile" className={navLinkClass}>
           <svg
             width="20"

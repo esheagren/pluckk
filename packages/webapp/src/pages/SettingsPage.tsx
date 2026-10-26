@@ -1,4 +1,5 @@
 import { useState, useEffect, type JSX } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BACKEND_URL, MOCHI_API_URL } from '@pluckk/shared/constants';
 import { getAccessToken, api } from '@pluckk/shared/api';
 import { useTheme } from '../hooks/useTheme';
@@ -26,11 +27,27 @@ import {
   BREADTH_LEVELS,
 } from '../types';
 
+// One page per section, linkable as /settings#<id>.
+const SECTIONS = [
+  { id: 'review', label: 'Review', description: 'How long sessions are and how quickly new cards are introduced.' },
+  { id: 'decks', label: 'Decks', description: "Each deck's share of a Mix session, its new-card rate, and whether it is paused." },
+  { id: 'profile', label: 'Learning profile', description: 'Who you are and how you like to learn; Pluckk uses this when it writes cards.' },
+  { id: 'integrations', label: 'Integrations', description: 'Send cards to Mochi, or import your Mochi decks.' },
+  { id: 'appearance', label: 'Appearance', description: 'How Pluckk looks.' },
+  { id: 'account', label: 'Account', description: 'The account you are signed in with.' },
+] as const;
+type SectionId = (typeof SECTIONS)[number]['id'];
+
 const DEFAULT_NEW_CARDS_PER_DAY = 10;
 const NEW_CARDS_KEY = 'pluckk_new_cards_per_day';
 
 export default function SettingsPage({ user, onSignOut }: SettingsPageProps): JSX.Element {
   const { toggleTheme, isDark } = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const section: SectionId = SECTIONS.find((s) => `#${s.id}` === location.hash)?.id ?? 'review';
+  const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
+  const selectSection = (id: SectionId): void => navigate({ hash: id }, { replace: true });
   const [mochiApiKey, setMochiApiKey] = useState('');
   const [mochiDeckId, setMochiDeckId] = useState('');
   const [decks, setDecks] = useState<MochiDeck[]>([]);
@@ -38,8 +55,6 @@ export default function SettingsPage({ user, onSignOut }: SettingsPageProps): JS
   const [saving, setSaving] = useState(false);
   const [fetchingDecks, setFetchingDecks] = useState(false);
   const [status, setStatus] = useState<StatusMessage>({ type: '', message: '' });
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [learningProfileOpen, setLearningProfileOpen] = useState(false);
   const [newCardsPerDay, setNewCardsPerDay] = useState<number | ''>(DEFAULT_NEW_CARDS_PER_DAY);
   const [sessionSize, setSessionSize] = useState<number | ''>(100);
 
@@ -497,691 +512,676 @@ export default function SettingsPage({ user, onSignOut }: SettingsPageProps): JS
   }
 
   return (
-    <div className="w-full max-w-lg mx-auto">
+    <div className="w-full max-w-4xl mx-auto">
       <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-6">Settings</h2>
 
-      <div className="bg-white dark:bg-dark-surface rounded-xl border border-gray-200 dark:border-dark-border divide-y divide-gray-100 dark:divide-dark-border">
-        {/* Email */}
-        <div className="px-5 py-4">
-          <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
-            Email
-          </label>
-          <div className="text-gray-800 dark:text-gray-200">{user?.email}</div>
-        </div>
-
-        {/* Study Settings */}
-        {/* Review session defaults + per-deck configuration (read by the review mixer) */}
-        <div className="px-5 py-4">
-          <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
-            Session Size
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              type="number"
-              min="1"
-              max="1000"
-              value={sessionSize}
-              onChange={(e) => handleSessionSizeChange(e.target.value)}
-              className="w-20 px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-bg dark:text-gray-200"
-            />
-            <span className="text-sm text-gray-500 dark:text-gray-400">cards per Mix/Focus session</span>
-          </div>
-        </div>
-
-        <div className="px-5 py-4">
-          <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
-            New Cards Per Day
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={newCardsPerDay}
-              onChange={(e) => handleNewCardsChange(e.target.value)}
-              onBlur={handleNewCardsBlur}
-              className="w-20 px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-bg dark:text-gray-200"
-            />
-            <span className="text-sm text-gray-500 dark:text-gray-400">cards</span>
-          </div>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-            Default introduction rate; each deck can override it below.
-          </p>
-        </div>
-
-        <div className="px-5 py-4">
-          <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
-            Review Decks
-          </label>
-          <DeckSettings />
-        </div>
-
-        {/* Appearance */}
-        <div className="px-5 py-4">
-          <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
-            Appearance
-          </label>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-800 dark:text-gray-200">Dark Mode</span>
-            <button
-              onClick={toggleTheme}
-              className={`relative w-12 h-7 rounded-full transition-colors ${
-                isDark ? 'bg-gray-600' : 'bg-gray-200'
-              }`}
-              aria-label="Toggle dark mode"
-            >
-              <span
-                className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                  isDark ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-
-        {/* Learning Profile Toggle */}
-        <div className="px-5 py-4">
-          <button
-            onClick={() => setLearningProfileOpen(!learningProfileOpen)}
-            className="flex items-center justify-between w-full text-left"
-          >
-            <span className="text-sm text-gray-800 dark:text-gray-200">Learning Profile</span>
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className={`text-gray-400 dark:text-gray-500 transition-transform ${
-                learningProfileOpen ? 'rotate-180' : ''
-              }`}
-            >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-        </div>
-
-        {/* Learning Profile Content */}
-        {learningProfileOpen && (
-          <div className="px-5 py-4 border-t border-gray-100 dark:border-dark-border bg-gray-50/50 dark:bg-dark-bg/50">
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-              Help us personalize your experience.
-            </p>
-
-            <div className="space-y-5">
-              {/* Primary Category */}
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                  What best describes you?
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { value: 'student', label: 'Student' },
-                    { value: 'worker', label: 'Work in Industry' },
-                    { value: 'researcher', label: 'Researcher' },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => handlePrimaryCategoryChange(option.value as PrimaryCategory)}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        primaryCategory === option.value
-                          ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Student-specific fields */}
-              {primaryCategory === 'student' && (
-                <>
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                      Level of Study
-                    </label>
-                    <select
-                      value={studentLevel || ''}
-                      onChange={(e) => setStudentLevel(e.target.value as StudentLevel || null)}
-                      className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
-                    >
-                      <option value="">Select level</option>
-                      {STUDENT_LEVELS.map((level) => (
-                        <option key={level.value} value={level.value}>
-                          {level.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {needsStudentField() && (
-                    <div>
-                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                        {studentLevel === 'college' ? 'Major' : 'Field of Study'}
-                      </label>
-                      <input
-                        type="text"
-                        value={studentField}
-                        onChange={(e) => setStudentField(e.target.value)}
-                        placeholder={studentLevel === 'college' ? 'e.g., Computer Science' : 'e.g., Neuroscience'}
-                        className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Worker-specific fields */}
-              {primaryCategory === 'worker' && (
-                <>
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                      Fields (select all that apply)
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {WORK_FIELDS.map((field) => (
-                        <button
-                          key={field.value}
-                          type="button"
-                          onClick={() => toggleWorkField(field.value)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                            workFields.includes(field.value)
-                              ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
-                              : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                          }`}
-                        >
-                          {field.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {workFields.includes('other') && (
-                    <div>
-                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                        Please Specify
-                      </label>
-                      <input
-                        type="text"
-                        value={workFieldOther}
-                        onChange={(e) => setWorkFieldOther(e.target.value)}
-                        placeholder="e.g., Real Estate"
-                        className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                      Years of Experience
-                    </label>
-                    <select
-                      value={workYearsExperience || ''}
-                      onChange={(e) => setWorkYearsExperience(e.target.value as YearsExperience || null)}
-                      className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
-                    >
-                      <option value="">Select experience</option>
-                      {YEARS_EXPERIENCE.map((years) => (
-                        <option key={years.value} value={years.value}>
-                          {years.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-
-              {/* Researcher-specific fields */}
-              {primaryCategory === 'researcher' && (
-                <>
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                      Research Field
-                    </label>
-                    <input
-                      type="text"
-                      value={researchField}
-                      onChange={(e) => setResearchField(e.target.value)}
-                      placeholder="e.g., Computational Biology"
-                      className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                      Years of Experience
-                    </label>
-                    <select
-                      value={researchYearsExperience || ''}
-                      onChange={(e) => setResearchYearsExperience(e.target.value as YearsExperience || null)}
-                      className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
-                    >
-                      <option value="">Select experience</option>
-                      {YEARS_EXPERIENCE.map((years) => (
-                        <option key={years.value} value={years.value}>
-                          {years.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-
-              {/* Additional Interests */}
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                  Additional Interests
-                </label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {ADDITIONAL_INTERESTS.map((interest) => (
-                    <button
-                      key={interest}
-                      type="button"
-                      onClick={() => toggleInterest(interest)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                        selectedInterests.includes(interest)
-                          ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                      }`}
-                    >
-                      {interest}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="text"
-                  value={otherInterests}
-                  onChange={(e) => setOtherInterests(e.target.value)}
-                  placeholder="Other interests (e.g., Philosophy, Music Theory)"
-                  className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
-                />
-              </div>
-
-              {/* Learning Preferences Section */}
-              <div className="pt-4 mt-4 border-t border-gray-200 dark:border-dark-border">
-                <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">
-                  Learning Preferences
-                </h4>
-
-                {/* Spaced Repetition Experience */}
-                <div className="mb-5">
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                    Experience with Spaced Repetition
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {SPACED_REP_EXPERIENCE.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setSpacedRepExperience(option.value)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                          spacedRepExperience === option.value
-                            ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Technicality Preference */}
-                <div className="mb-5">
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                    How Technical Should Answers Be?
-                  </label>
-                  <div className="space-y-2">
-                    {TECHNICALITY_EXAMPLES.map((option) => (
-                      <button
-                        key={option.level}
-                        type="button"
-                        onClick={() => setTechnicalityPreference(option.level)}
-                        className={`w-full p-3 rounded-lg text-left text-sm transition-colors border ${
-                          technicalityPreference === option.level
-                            ? 'border-gray-800 dark:border-gray-200 bg-gray-50 dark:bg-gray-800'
-                            : 'border-gray-200 dark:border-dark-border bg-white dark:bg-dark-surface hover:bg-gray-50 dark:hover:bg-gray-800'
-                        }`}
-                      >
-                        <span className="font-medium text-gray-800 dark:text-gray-200">
-                          {option.label}
-                        </span>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mt-1">
-                          "{option.example}"
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Breadth Preference */}
-                <div>
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                    How Focused Should Questions Be?
-                  </label>
-                  <div className="space-y-2">
-                    {BREADTH_LEVELS.map((option) => (
-                      <button
-                        key={option.level}
-                        type="button"
-                        onClick={() => setBreadthPreference(option.level)}
-                        className={`w-full p-3 rounded-lg text-left text-sm transition-colors border ${
-                          breadthPreference === option.level
-                            ? 'border-gray-800 dark:border-gray-200 bg-gray-50 dark:bg-gray-800'
-                            : 'border-gray-200 dark:border-dark-border bg-white dark:bg-dark-surface hover:bg-gray-50 dark:hover:bg-gray-800'
-                        }`}
-                      >
-                        <span className="font-medium text-gray-800 dark:text-gray-200">
-                          {option.label}
-                        </span>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          {option.description}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Save Button */}
-            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-dark-border">
-              <button
-                onClick={saveLearningProfile}
-                disabled={savingProfile}
-                className="w-full py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {savingProfile ? 'Saving...' : 'Save Learning Profile'}
-              </button>
-
-              {profileStatus.message && (
-                <p
-                  className={`text-sm text-center mt-3 ${
-                    profileStatus.type === 'success'
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {profileStatus.message}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Advanced Settings Toggle */}
-        <div className="px-5 py-4">
-          <button
-            onClick={() => setAdvancedOpen(!advancedOpen)}
-            className="flex items-center justify-between w-full text-left"
-          >
-            <span className="text-sm text-gray-800 dark:text-gray-200">Advanced Settings</span>
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className={`text-gray-400 dark:text-gray-500 transition-transform ${
-                advancedOpen ? 'rotate-180' : ''
-              }`}
-            >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-        </div>
-
-        {/* Advanced Settings Content */}
-        {advancedOpen && (
-          <div className="px-5 py-4 border-t border-gray-100 dark:border-dark-border bg-gray-50/50 dark:bg-dark-bg/50">
-            <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-              Mochi Integration
-            </h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-              Connect your Mochi account to send flashcards directly from the extension.
-            </p>
-
-            <div className="space-y-4">
-              {/* API Key */}
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                  API Key
-                </label>
-                <input
-                  type="password"
-                  value={mochiApiKey}
-                  onChange={(e) => setMochiApiKey(e.target.value)}
-                  placeholder="Enter your Mochi API key"
-                  className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
-                />
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-                  Get your API key from Mochi Settings - API
-                </p>
-              </div>
-
-              {/* Deck Selection */}
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-                  Default Deck
-                </label>
-                <div className="flex gap-2">
-                  <select
-                    value={mochiDeckId}
-                    onChange={(e) => setMochiDeckId(e.target.value)}
-                    disabled={decks.length === 0}
-                    className="flex-1 px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm bg-white dark:bg-dark-surface dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 disabled:bg-gray-50 dark:disabled:bg-dark-bg disabled:text-gray-400 dark:disabled:text-gray-500"
-                  >
-                    {decks.length === 0 ? (
-                      <option value="">No decks loaded</option>
-                    ) : (
-                      decks.map((deck) => (
-                        <option key={deck.id} value={deck.id}>
-                          {deck.name}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <button
-                    onClick={() => fetchDecks()}
-                    disabled={fetchingDecks || !mochiApiKey}
-                    className="px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {fetchingDecks ? 'Loading...' : 'Fetch'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Save Button */}
-            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-dark-border">
-              <button
-                onClick={saveSettings}
-                disabled={saving}
-                className="w-full py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? 'Saving...' : 'Save Mochi Settings'}
-              </button>
-
-              {status.message && (
-                <p
-                  className={`text-sm text-center mt-3 ${
-                    status.type === 'success'
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {status.message}
-                </p>
-              )}
-            </div>
-
-            {/* Import from Mochi Section */}
-            {mochiApiKey && (
-              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-dark-border">
+      <div className="flex flex-col md:flex-row gap-6 md:gap-10">
+        {/* Section nav: vertical on desktop, a scrolling row on narrow screens */}
+        <nav aria-label="Settings sections" className="md:w-48 shrink-0">
+          <ul className="flex md:flex-col gap-1 overflow-x-auto md:sticky md:top-8">
+            {SECTIONS.map((s) => (
+              <li key={s.id}>
                 <button
-                  onClick={() => setImportOpen(!importOpen)}
-                  className="flex items-center justify-between w-full text-left mb-3"
+                  onClick={() => selectSection(s.id)}
+                  aria-current={s.id === section ? 'page' : undefined}
+                  className={`w-full text-left whitespace-nowrap px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    s.id === section
+                      ? 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
+                      : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-800 dark:hover:text-gray-200'
+                  }`}
                 >
-                  <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Import from Mochi
-                  </h4>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    className={`text-gray-400 dark:text-gray-500 transition-transform ${
-                      importOpen ? 'rotate-180' : ''
-                    }`}
-                  >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
+                  {s.label}
                 </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
-                {importOpen && (
-                  <div className="space-y-4">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Import existing cards from your Mochi decks into Pluckk.
-                    </p>
+        <section className="flex-1 min-w-0">
+          <div className="mb-4">
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-100">{current.label}</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{current.description}</p>
+          </div>
 
-                    {/* Load Decks Button */}
-                    {importDecks.length === 0 && (
-                      <button
-                        onClick={fetchImportDecks}
-                        disabled={fetchingImportDecks}
-                        className="w-full py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {fetchingImportDecks ? 'Loading decks...' : 'Load Mochi Decks'}
-                      </button>
-                    )}
+          <div className="bg-white dark:bg-dark-surface rounded-xl border border-gray-200 dark:border-dark-border divide-y divide-gray-100 dark:divide-dark-border">
+            {section === 'review' && (
+              <>
+                <div className="px-5 py-4">
+                  <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
+                    Session Size
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={sessionSize}
+                      onChange={(e) => handleSessionSizeChange(e.target.value)}
+                      className="w-20 px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-bg dark:text-gray-200"
+                    />
+                    <span className="text-sm text-gray-500 dark:text-gray-400">cards per Mix/Focus session</span>
+                  </div>
+                </div>
 
-                    {/* Deck Selection List */}
-                    {importDecks.length > 0 && (
+                <div className="px-5 py-4">
+                  <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
+                    New Cards Per Day
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={newCardsPerDay}
+                      onChange={(e) => handleNewCardsChange(e.target.value)}
+                      onBlur={handleNewCardsBlur}
+                      className="w-20 px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-bg dark:text-gray-200"
+                    />
+                    <span className="text-sm text-gray-500 dark:text-gray-400">cards</span>
+                  </div>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                    Default introduction rate; each deck can override it under Decks.
+                  </p>
+                </div>
+              </>
+            )}
+
+            {section === 'decks' && (
+              <div className="px-5 py-4">
+                <DeckSettings />
+              </div>
+            )}
+
+            {section === 'profile' && (
+                <div className="px-5 py-4">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                    Help us personalize your experience.
+                  </p>
+
+                  <div className="space-y-5">
+                    {/* Primary Category */}
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                        What best describes you?
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { value: 'student', label: 'Student' },
+                          { value: 'worker', label: 'Work in Industry' },
+                          { value: 'researcher', label: 'Researcher' },
+                        ].map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => handlePrimaryCategoryChange(option.value as PrimaryCategory)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                              primaryCategory === option.value
+                                ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Student-specific fields */}
+                    {primaryCategory === 'student' && (
                       <>
-                        <div className="border border-gray-200 dark:border-dark-border rounded-lg max-h-64 overflow-y-auto">
-                          {buildDeckTree().map(({ deck, depth }) => (
-                            <label
-                              key={deck.id}
-                              className="flex items-center px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer border-b border-gray-100 dark:border-dark-border last:border-b-0"
-                              style={{ paddingLeft: `${12 + depth * 16}px` }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedDeckIds.has(deck.id)}
-                                onChange={() => toggleDeckSelection(deck.id)}
-                                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 focus:ring-gray-500 dark:focus:ring-gray-400"
-                              />
-                              <span className="ml-3 text-sm text-gray-700 dark:text-gray-300">
-                                {deck.name}
-                              </span>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            Level of Study
+                          </label>
+                          <select
+                            value={studentLevel || ''}
+                            onChange={(e) => setStudentLevel(e.target.value as StudentLevel || null)}
+                            className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
+                          >
+                            <option value="">Select level</option>
+                            {STUDENT_LEVELS.map((level) => (
+                              <option key={level.value} value={level.value}>
+                                {level.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {needsStudentField() && (
+                          <div>
+                            <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                              {studentLevel === 'college' ? 'Major' : 'Field of Study'}
                             </label>
-                          ))}
-                        </div>
-
-                        <div className="flex gap-2">
-                          <button
-                            onClick={runImport}
-                            disabled={importing || selectedDeckIds.size === 0}
-                            className="flex-1 py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {importing
-                              ? importProgress
-                                ? `Importing ${importProgress.current}/${importProgress.total}...`
-                                : 'Starting...'
-                              : `Import ${selectedDeckIds.size} deck${selectedDeckIds.size !== 1 ? 's' : ''}`}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setImportDecks([]);
-                              setSelectedDeckIds(new Set());
-                              setImportResult(null);
-                              setImportProgress(null);
-                              setImportStatus({ type: '', message: '' });
-                            }}
-                            className="px-4 py-2.5 text-gray-500 dark:text-gray-400 text-sm hover:text-gray-700 dark:hover:text-gray-200"
-                          >
-                            Reset
-                          </button>
-                        </div>
-
-                        {/* Progress Indicator */}
-                        {importProgress && (
-                          <div className="mt-3 space-y-2">
-                            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                              <span>Importing: {importProgress.deckName}</span>
-                              <span>{importProgress.current} of {importProgress.total}</span>
-                            </div>
-                            <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gray-800 dark:bg-gray-200 transition-all duration-300"
-                                style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
-                              />
-                            </div>
+                            <input
+                              type="text"
+                              value={studentField}
+                              onChange={(e) => setStudentField(e.target.value)}
+                              placeholder={studentLevel === 'college' ? 'e.g., Computer Science' : 'e.g., Neuroscience'}
+                              className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
+                            />
                           </div>
                         )}
                       </>
                     )}
 
-                    {/* Import Result */}
-                    {importResult && (
-                      <div className={`p-3 rounded-lg text-sm ${
-                        importResult.success
-                          ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-                          : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
-                      }`}>
-                        <p className="font-medium">
-                          {importResult.success ? 'Import complete' : 'Import had issues'}
-                        </p>
-                        <ul className="mt-1 space-y-0.5 text-xs">
-                          <li>Cards imported: {importResult.imported}</li>
-                          <li>Duplicates skipped: {importResult.skipped}</li>
-                          {importResult.foldersCreated.length > 0 && (
-                            <li>Folders created: {importResult.foldersCreated.join(', ')}</li>
-                          )}
-                          {importResult.errors.length > 0 && (
-                            <li className="text-red-600 dark:text-red-400">
-                              Errors: {importResult.errors.join('; ')}
-                            </li>
-                          )}
-                        </ul>
-                      </div>
+                    {/* Worker-specific fields */}
+                    {primaryCategory === 'worker' && (
+                      <>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            Fields (select all that apply)
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {WORK_FIELDS.map((field) => (
+                              <button
+                                key={field.value}
+                                type="button"
+                                onClick={() => toggleWorkField(field.value)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                                  workFields.includes(field.value)
+                                    ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
+                                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                }`}
+                              >
+                                {field.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {workFields.includes('other') && (
+                          <div>
+                            <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                              Please Specify
+                            </label>
+                            <input
+                              type="text"
+                              value={workFieldOther}
+                              onChange={(e) => setWorkFieldOther(e.target.value)}
+                              placeholder="e.g., Real Estate"
+                              className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
+                            />
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            Years of Experience
+                          </label>
+                          <select
+                            value={workYearsExperience || ''}
+                            onChange={(e) => setWorkYearsExperience(e.target.value as YearsExperience || null)}
+                            className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
+                          >
+                            <option value="">Select experience</option>
+                            {YEARS_EXPERIENCE.map((years) => (
+                              <option key={years.value} value={years.value}>
+                                {years.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
                     )}
 
-                    {/* Import Status */}
-                    {importStatus.message && !importResult && (
+                    {/* Researcher-specific fields */}
+                    {primaryCategory === 'researcher' && (
+                      <>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            Research Field
+                          </label>
+                          <input
+                            type="text"
+                            value={researchField}
+                            onChange={(e) => setResearchField(e.target.value)}
+                            placeholder="e.g., Computational Biology"
+                            className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            Years of Experience
+                          </label>
+                          <select
+                            value={researchYearsExperience || ''}
+                            onChange={(e) => setResearchYearsExperience(e.target.value as YearsExperience || null)}
+                            className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200"
+                          >
+                            <option value="">Select experience</option>
+                            {YEARS_EXPERIENCE.map((years) => (
+                              <option key={years.value} value={years.value}>
+                                {years.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Additional Interests */}
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                        Additional Interests
+                      </label>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {ADDITIONAL_INTERESTS.map((interest) => (
+                          <button
+                            key={interest}
+                            type="button"
+                            onClick={() => toggleInterest(interest)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                              selectedInterests.includes(interest)
+                                ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            {interest}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        type="text"
+                        value={otherInterests}
+                        onChange={(e) => setOtherInterests(e.target.value)}
+                        placeholder="Other interests (e.g., Philosophy, Music Theory)"
+                        className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
+                      />
+                    </div>
+
+                    {/* Learning Preferences Section */}
+                    <div className="pt-4 mt-4 border-t border-gray-200 dark:border-dark-border">
+                      <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">
+                        Learning Preferences
+                      </h4>
+
+                      {/* Spaced Repetition Experience */}
+                      <div className="mb-5">
+                        <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                          Experience with Spaced Repetition
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {SPACED_REP_EXPERIENCE.map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setSpacedRepExperience(option.value)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                                spacedRepExperience === option.value
+                                  ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900'
+                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Technicality Preference */}
+                      <div className="mb-5">
+                        <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                          How Technical Should Answers Be?
+                        </label>
+                        <div className="space-y-2">
+                          {TECHNICALITY_EXAMPLES.map((option) => (
+                            <button
+                              key={option.level}
+                              type="button"
+                              onClick={() => setTechnicalityPreference(option.level)}
+                              className={`w-full p-3 rounded-lg text-left text-sm transition-colors border ${
+                                technicalityPreference === option.level
+                                  ? 'border-gray-800 dark:border-gray-200 bg-gray-50 dark:bg-gray-800'
+                                  : 'border-gray-200 dark:border-dark-border bg-white dark:bg-dark-surface hover:bg-gray-50 dark:hover:bg-gray-800'
+                              }`}
+                            >
+                              <span className="font-medium text-gray-800 dark:text-gray-200">
+                                {option.label}
+                              </span>
+                              <div className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mt-1">
+                                "{option.example}"
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Breadth Preference */}
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                          How Focused Should Questions Be?
+                        </label>
+                        <div className="space-y-2">
+                          {BREADTH_LEVELS.map((option) => (
+                            <button
+                              key={option.level}
+                              type="button"
+                              onClick={() => setBreadthPreference(option.level)}
+                              className={`w-full p-3 rounded-lg text-left text-sm transition-colors border ${
+                                breadthPreference === option.level
+                                  ? 'border-gray-800 dark:border-gray-200 bg-gray-50 dark:bg-gray-800'
+                                  : 'border-gray-200 dark:border-dark-border bg-white dark:bg-dark-surface hover:bg-gray-50 dark:hover:bg-gray-800'
+                              }`}
+                            >
+                              <span className="font-medium text-gray-800 dark:text-gray-200">
+                                {option.label}
+                              </span>
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {option.description}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Save Button */}
+                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-dark-border">
+                    <button
+                      onClick={saveLearningProfile}
+                      disabled={savingProfile}
+                      className="w-full py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {savingProfile ? 'Saving...' : 'Save Learning Profile'}
+                    </button>
+
+                    {profileStatus.message && (
                       <p
-                        className={`text-sm text-center ${
-                          importStatus.type === 'success'
+                        className={`text-sm text-center mt-3 ${
+                          profileStatus.type === 'success'
                             ? 'text-green-600 dark:text-green-400'
                             : 'text-red-600 dark:text-red-400'
                         }`}
                       >
-                        {importStatus.message}
+                        {profileStatus.message}
                       </p>
                     )}
                   </div>
-                )}
+                </div>
+            )}
+
+            {section === 'integrations' && (
+                <div className="px-5 py-4">
+                  <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+                    Mochi Integration
+                  </h4>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                    Connect your Mochi account to send flashcards directly from the extension.
+                  </p>
+
+                  <div className="space-y-4">
+                    {/* API Key */}
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                        API Key
+                      </label>
+                      <input
+                        type="password"
+                        value={mochiApiKey}
+                        onChange={(e) => setMochiApiKey(e.target.value)}
+                        placeholder="Enter your Mochi API key"
+                        className="w-full px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 bg-white dark:bg-dark-surface dark:text-gray-200 dark:placeholder-gray-500"
+                      />
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                        Get your API key from Mochi Settings - API
+                      </p>
+                    </div>
+
+                    {/* Deck Selection */}
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                        Default Deck
+                      </label>
+                      <div className="flex gap-2">
+                        <select
+                          value={mochiDeckId}
+                          onChange={(e) => setMochiDeckId(e.target.value)}
+                          disabled={decks.length === 0}
+                          className="flex-1 px-3 py-2.5 border border-gray-200 dark:border-dark-border rounded-lg text-sm bg-white dark:bg-dark-surface dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 disabled:bg-gray-50 dark:disabled:bg-dark-bg disabled:text-gray-400 dark:disabled:text-gray-500"
+                        >
+                          {decks.length === 0 ? (
+                            <option value="">No decks loaded</option>
+                          ) : (
+                            decks.map((deck) => (
+                              <option key={deck.id} value={deck.id}>
+                                {deck.name}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <button
+                          onClick={() => fetchDecks()}
+                          disabled={fetchingDecks || !mochiApiKey}
+                          className="px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {fetchingDecks ? 'Loading...' : 'Fetch'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Save Button */}
+                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-dark-border">
+                    <button
+                      onClick={saveSettings}
+                      disabled={saving}
+                      className="w-full py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {saving ? 'Saving...' : 'Save Mochi Settings'}
+                    </button>
+
+                    {status.message && (
+                      <p
+                        className={`text-sm text-center mt-3 ${
+                          status.type === 'success'
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-red-600 dark:text-red-400'
+                        }`}
+                      >
+                        {status.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Import from Mochi Section */}
+                  {mochiApiKey && (
+                    <div className="mt-6 pt-6 border-t border-gray-200 dark:border-dark-border">
+                      <button
+                        onClick={() => setImportOpen(!importOpen)}
+                        className="flex items-center justify-between w-full text-left mb-3"
+                      >
+                        <h4 className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Import from Mochi
+                        </h4>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className={`text-gray-400 dark:text-gray-500 transition-transform ${
+                            importOpen ? 'rotate-180' : ''
+                          }`}
+                        >
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </button>
+
+                      {importOpen && (
+                        <div className="space-y-4">
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Import existing cards from your Mochi decks into Pluckk.
+                          </p>
+
+                          {/* Load Decks Button */}
+                          {importDecks.length === 0 && (
+                            <button
+                              onClick={fetchImportDecks}
+                              disabled={fetchingImportDecks}
+                              className="w-full py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {fetchingImportDecks ? 'Loading decks...' : 'Load Mochi Decks'}
+                            </button>
+                          )}
+
+                          {/* Deck Selection List */}
+                          {importDecks.length > 0 && (
+                            <>
+                              <div className="border border-gray-200 dark:border-dark-border rounded-lg max-h-64 overflow-y-auto">
+                                {buildDeckTree().map(({ deck, depth }) => (
+                                  <label
+                                    key={deck.id}
+                                    className="flex items-center px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer border-b border-gray-100 dark:border-dark-border last:border-b-0"
+                                    style={{ paddingLeft: `${12 + depth * 16}px` }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedDeckIds.has(deck.id)}
+                                      onChange={() => toggleDeckSelection(deck.id)}
+                                      className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 focus:ring-gray-500 dark:focus:ring-gray-400"
+                                    />
+                                    <span className="ml-3 text-sm text-gray-700 dark:text-gray-300">
+                                      {deck.name}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={runImport}
+                                  disabled={importing || selectedDeckIds.size === 0}
+                                  className="flex-1 py-2.5 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-900 dark:hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {importing
+                                    ? importProgress
+                                      ? `Importing ${importProgress.current}/${importProgress.total}...`
+                                      : 'Starting...'
+                                    : `Import ${selectedDeckIds.size} deck${selectedDeckIds.size !== 1 ? 's' : ''}`}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setImportDecks([]);
+                                    setSelectedDeckIds(new Set());
+                                    setImportResult(null);
+                                    setImportProgress(null);
+                                    setImportStatus({ type: '', message: '' });
+                                  }}
+                                  className="px-4 py-2.5 text-gray-500 dark:text-gray-400 text-sm hover:text-gray-700 dark:hover:text-gray-200"
+                                >
+                                  Reset
+                                </button>
+                              </div>
+
+                              {/* Progress Indicator */}
+                              {importProgress && (
+                                <div className="mt-3 space-y-2">
+                                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                                    <span>Importing: {importProgress.deckName}</span>
+                                    <span>{importProgress.current} of {importProgress.total}</span>
+                                  </div>
+                                  <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gray-800 dark:bg-gray-200 transition-all duration-300"
+                                      style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {/* Import Result */}
+                          {importResult && (
+                            <div className={`p-3 rounded-lg text-sm ${
+                              importResult.success
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                            }`}>
+                              <p className="font-medium">
+                                {importResult.success ? 'Import complete' : 'Import had issues'}
+                              </p>
+                              <ul className="mt-1 space-y-0.5 text-xs">
+                                <li>Cards imported: {importResult.imported}</li>
+                                <li>Duplicates skipped: {importResult.skipped}</li>
+                                {importResult.foldersCreated.length > 0 && (
+                                  <li>Folders created: {importResult.foldersCreated.join(', ')}</li>
+                                )}
+                                {importResult.errors.length > 0 && (
+                                  <li className="text-red-600 dark:text-red-400">
+                                    Errors: {importResult.errors.join('; ')}
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Import Status */}
+                          {importStatus.message && !importResult && (
+                            <p
+                              className={`text-sm text-center ${
+                                importStatus.type === 'success'
+                                  ? 'text-green-600 dark:text-green-400'
+                                  : 'text-red-600 dark:text-red-400'
+                              }`}
+                            >
+                              {importStatus.message}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+            )}
+
+            {section === 'appearance' && (
+              <div className="px-5 py-4">
+                <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
+                  Appearance
+                </label>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-800 dark:text-gray-200">Dark Mode</span>
+                  <button
+                    onClick={toggleTheme}
+                    className={`relative w-12 h-7 rounded-full transition-colors ${
+                      isDark ? 'bg-gray-600' : 'bg-gray-200'
+                    }`}
+                    aria-label="Toggle dark mode"
+                  >
+                    <span
+                      className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                        isDark ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             )}
-          </div>
-        )}
 
-        {/* Sign Out */}
-        <div className="px-5 py-4 border-t border-gray-100 dark:border-dark-border">
-          <button
-            onClick={onSignOut}
-            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
-          >
-            Sign out
-          </button>
-        </div>
+            {section === 'account' && (
+              <>
+                <div className="px-5 py-4">
+                  <label className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide block mb-1">
+                    Email
+                  </label>
+                  <div className="text-gray-800 dark:text-gray-200">{user?.email}</div>
+                </div>
+                <div className="px-5 py-4">
+                  <button
+                    onClick={onSignOut}
+                    className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
