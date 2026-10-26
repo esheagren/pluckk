@@ -7,6 +7,7 @@ struct CardGenerationView: View {
     @State private var editingCardIndex: Int?
     @State private var showFocusInput = false
     @State private var focusText = ""
+    @FocusState private var noteFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -212,20 +213,17 @@ struct CardGenerationView: View {
                         )
                         .modifier(DealIn(index: index))
                     }
+
+                    // The actions sit at the end of the hand, not on a fixed footer
+                    bottomActions
+                        .padding(.top, 6)
+                        .modifier(DealIn(index: appState.generatedCards.count))
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 20)
             }
-
-            // Bottom actions, on a solid bar
-            bottomActions
-                .background(colorScheme == .dark ? PluckkTheme.Dark.surface : PluckkTheme.Light.surface)
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(colorScheme == .dark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder)
-                        .frame(height: 1)
-                }
+            .scrollIndicators(.hidden)
         }
         .onAppear {
             // Don't auto-select - user must choose which cards to keep
@@ -243,44 +241,23 @@ struct CardGenerationView: View {
 
     private var bottomActions: some View {
         VStack(spacing: 12) {
+            // Regenerate opens a note: in what ways should the next batch be different?
+            if showFocusInput {
+                regenerateNote
+            }
 
-            // Action buttons
-            HStack {
-                // Regenerate button with optional focus input
-                if showFocusInput {
-                    HStack(spacing: 8) {
-                        TextField("Focus on...", text: $focusText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                            .frame(maxWidth: 150)
-
-                        Button(action: {
-                            regenerateCardsWithFocus()
-                        }) {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button(action: {
-                            showFocusInput = false
-                            focusText = ""
-                        }) {
-                            Image(systemName: "xmark")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.secondary)
-                    }
-                } else {
+            HStack(spacing: 10) {
+                if !showFocusInput {
                     Button(action: {
                         showFocusInput = true
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 12, weight: .semibold))
                             Text("Regenerate")
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(PillButtonStyle(prominent: false))
                     .keyboardShortcut("r", modifiers: [])
                 }
 
@@ -290,20 +267,66 @@ struct CardGenerationView: View {
                 Button(action: {
                     sendCards()
                 }) {
-                    HStack(spacing: 4) {
-                        Text("Store")
-                        if totalExpandedCardCount > 0 {
-                            Text("(\(totalExpandedCardCount))")
-                                .foregroundColor(.secondary)
-                        }
+                    HStack(spacing: 6) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(totalExpandedCardCount > 0 ? "Store \(totalExpandedCardCount)" : "Store")
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PillButtonStyle(prominent: true))
                 .disabled(appState.selectedCardIndices.isEmpty)
-                .keyboardShortcut(.return, modifiers: [])
+                // Return belongs to the note while it is open
+                .keyboardShortcut(showFocusInput ? nil : KeyboardShortcut(.return, modifiers: []))
+            }
+        }
+    }
+
+    private var regenerateNote: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("What should be different?")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(colorScheme == .dark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary)
+
+            TextField("e.g. shorter answers, more about the mechanism, fewer cloze cards",
+                      text: $focusText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .lineLimit(2...5)
+                .focused($noteFocused)
+                .onSubmit { regenerateCardsWithFocus() }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(colorScheme == .dark ? PluckkTheme.Dark.table : PluckkTheme.Light.table)
+                )
+
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Cancel") {
+                    showFocusInput = false
+                    focusText = ""
+                }
+                .buttonStyle(PillButtonStyle(prominent: false))
+                .keyboardShortcut(.cancelAction)
+
+                Button(action: { regenerateCardsWithFocus() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Regenerate")
+                    }
+                }
+                .buttonStyle(PillButtonStyle(prominent: true))
             }
         }
         .padding(16)
+        .background(colorScheme == .dark ? PluckkTheme.Dark.card : PluckkTheme.Light.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(colorScheme == .dark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder, lineWidth: 1)
+        )
+        .onAppear { noteFocused = true }
     }
 
     // MARK: - Actions
@@ -515,6 +538,38 @@ struct CardGenerationView: View {
         } else {
             appDelegate.panel.collapse()
         }
+    }
+}
+
+// MARK: - Buttons
+
+/// Capsule buttons for the end-of-hand actions: prominent = solid brand tan, otherwise outlined.
+struct PillButtonStyle: ButtonStyle {
+    let prominent: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isDark = colorScheme == .dark
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(prominent ? Color(hex: "1a1a1a")
+                                       : (isDark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(
+                Capsule().fill(prominent ? PluckkTheme.accent
+                                         : (isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card))
+            )
+            .overlay(
+                Capsule().stroke(prominent ? Color.clear
+                                           : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder),
+                                 lineWidth: 1)
+            )
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.35)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

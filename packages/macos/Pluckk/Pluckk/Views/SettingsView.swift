@@ -35,6 +35,7 @@ struct SettingsView: View {
             }
             .padding(16)
         }
+        .scrollIndicators(.hidden)
         .onAppear {
             loadSettings()
         }

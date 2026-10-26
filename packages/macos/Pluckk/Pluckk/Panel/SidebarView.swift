@@ -49,6 +49,7 @@ struct SidebarView: View {
 
             VStack(spacing: 0) {
                 GripBar(isPinned: isPinned)
+                    .zIndex(1)  // hover labels draw over the content below
 
                 // Main content based on current view
                 Group {
@@ -78,7 +79,7 @@ struct SidebarView: View {
 /// The strip across the top of the card. Dragging anywhere on it moves the window;
 /// the red dot on the left closes (collapses) the panel; the pin on the right keeps the
 /// card on the current desktop instead of following the user. Between them sits the
-/// toolbar: Create (card generation), Settings, and My cards (opens the web app).
+/// icon toolbar: Create (card generation), Settings, and Practice (opens review in the web app).
 struct GripBar: View {
     let isPinned: Bool
     @ObservedObject private var appState = AppState.shared
@@ -89,17 +90,17 @@ struct GripBar: View {
         ZStack {
             WindowDragArea()
 
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ToolbarTab(icon: "sparkles", label: "Create", isActive: appState.currentView == .generate) {
                     appState.currentView = .generate
                 }
                 ToolbarTab(icon: "gearshape", label: "Settings", isActive: appState.currentView == .settings) {
                     appState.currentView = .settings
                 }
-                ToolbarTab(icon: "rectangle.stack", label: "My cards", trailingIcon: "arrow.up.right", isActive: false) {
-                    if let url = URL(string: "\(Config.webappURL)/cards") { NSWorkspace.shared.open(url) }
+                // Review lives in the web app; its home page is the Mix Review
+                ToolbarTab(icon: "rectangle.stack", label: "Practice ↗", isActive: false) {
+                    if let url = URL(string: Config.webappURL) { NSWorkspace.shared.open(url) }
                 }
-                .help("Open your cards in the browser")
             }
 
             HStack {
@@ -139,38 +140,57 @@ struct GripBar: View {
     }
 }
 
-/// One item in the top toolbar: icon + label, highlighted when it is the current view.
+/// One item in the top toolbar: an icon, highlighted when it is the current view. Its name
+/// appears in a small label underneath after a short hover. (A system tooltip is unreliable
+/// here: the panel never activates the app, and macOS shows tooltips only for active apps.)
 struct ToolbarTab: View {
     let icon: String
     let label: String
-    var trailingIcon: String? = nil
     let isActive: Bool
     let action: () -> Void
     @State private var hovering = false
+    @State private var showLabel = false
+    @State private var pendingLabel: DispatchWorkItem?
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                Text(label)
-                    .font(.system(size: 12, weight: isActive ? .semibold : .medium))
-                if let trailingIcon {
-                    Image(systemName: trailingIcon)
-                        .font(.system(size: 8, weight: .semibold))
-                        .opacity(0.7)
-                }
-            }
-            .foregroundColor(Color.primary.opacity(isActive ? 0.95 : (hovering ? 0.8 : 0.5)))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule().fill(Color.primary.opacity(isActive ? 0.12 : (hovering ? 0.06 : 0)))
-            )
-            .contentShape(Capsule())
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.primary.opacity(isActive ? 0.95 : (hovering ? 0.8 : 0.5)))
+                .frame(width: 30, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.primary.opacity(isActive ? 0.12 : (hovering ? 0.06 : 0)))
+                )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .accessibilityLabel(label)
+        .onHover { inside in
+            hovering = inside
+            pendingLabel?.cancel()
+            if inside {
+                let work = DispatchWorkItem { withAnimation(.easeOut(duration: 0.12)) { showLabel = true } }
+                pendingLabel = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+            } else {
+                showLabel = false
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if showLabel {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.black.opacity(0.85)))
+                    .fixedSize()
+                    .offset(y: 28)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
     }
 }
 
