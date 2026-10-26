@@ -67,9 +67,8 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            // Resize handles: left edge → width, bottom edge → height
-            HStack { ResizeHandle(); Spacer() }
-            VStack { Spacer(); BottomResizeHandle() }
+            // One resize grip, bottom-right corner
+            VStack { Spacer(); HStack { Spacer(); CornerResizeHandle() } }
         }
     }
 }
@@ -210,108 +209,87 @@ struct WindowDragArea: NSViewRepresentable {
     }
 }
 
-// MARK: - Resize Handles
+// MARK: - Resize grip
 
-struct ResizeHandle: View {
-    @Environment(\.colorScheme) var colorScheme
-    @State private var isHovering = false
-    @State private var isDragging = false
-
-    private var handleColor: Color {
-        if isDragging {
-            return colorScheme == .dark ? Color.white.opacity(0.5) : Color.black.opacity(0.4)
-        } else if isHovering {
-            return colorScheme == .dark ? Color.white.opacity(0.35) : Color.black.opacity(0.25)
-        } else {
-            return colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.15)
-        }
-    }
+/// A small grip in the bottom-right corner: two diagonal strokes that brighten on hover.
+/// Dragging it resizes the card with the top-left corner fixed.
+struct CornerResizeHandle: View {
+    @State private var hovering = false
 
     var body: some View {
-        // Invisible hit area with pill indicator on hover
-        Color.clear
-            .frame(width: 12)
-            .contentShape(Rectangle())
-            .overlay(
-                // Vertical pill indicator - only visible on hover/drag
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(handleColor)
-                    .frame(width: 4, height: 40)
-                    .opacity(isHovering || isDragging ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.15), value: isHovering)
-            )
-            .onHover { hovering in
-                isHovering = hovering
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        isDragging = true
-                        // Dragging left (negative x) = wider panel
-                        if let panel = PluckkPanel.shared {
-                            panel.resize(to: panel.expandedWidth - value.translation.width)
-                        }
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                    }
-            )
+        ZStack(alignment: .bottomTrailing) {
+            CornerResizeArea(hovering: $hovering)
+            GripMarks()
+                .stroke(Color.primary.opacity(hovering ? 0.55 : 0.25),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .frame(width: 9, height: 9)
+                .padding(5)
+                .allowsHitTesting(false)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+        .frame(width: 22, height: 22)
     }
 }
 
-struct BottomResizeHandle: View {
-    @Environment(\.colorScheme) var colorScheme
-    @State private var isHovering = false
-    @State private var isDragging = false
-
-    private var handleColor: Color {
-        if isDragging {
-            return colorScheme == .dark ? Color.white.opacity(0.5) : Color.black.opacity(0.4)
-        } else if isHovering {
-            return colorScheme == .dark ? Color.white.opacity(0.35) : Color.black.opacity(0.25)
-        } else {
-            return colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.15)
-        }
+/// Two diagonal strokes hugging the bottom-right corner.
+struct GripMarks: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.move(to: CGPoint(x: rect.maxX, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return p
     }
+}
 
-    var body: some View {
-        Color.clear
-            .frame(height: 10)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-            .overlay(
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(handleColor)
-                    .frame(width: 40, height: 4)
-                    .opacity(isHovering || isDragging ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.15), value: isHovering)
-            )
-            .onHover { hovering in
-                isHovering = hovering
-                if hovering {
-                    NSCursor.resizeUpDown.push()
-                } else {
-                    NSCursor.pop()
-                }
+/// Tracks the drag in screen coordinates against the size at mouse-down. (The grip moves
+/// with the window as it resizes, so view-relative drag offsets would feed back on themselves.)
+struct CornerResizeArea: NSViewRepresentable {
+    @Binding var hovering: Bool
+
+    func makeNSView(context: Context) -> GripView {
+        let view = GripView()
+        view.onHover = { hovering = $0 }
+        return view
+    }
+    func updateNSView(_ nsView: GripView, context: Context) {}
+
+    final class GripView: NSView {
+        var onHover: ((Bool) -> Void)?
+        private var startMouse: NSPoint = .zero
+        private var startSize: NSSize = .zero
+        private var tracking: NSTrackingArea?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let tracking { removeTrackingArea(tracking) }
+            let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+            addTrackingArea(area)
+            tracking = area
+        }
+        override func mouseEntered(with event: NSEvent) { onHover?(true) }
+        override func mouseExited(with event: NSEvent) { onHover?(false) }
+
+        override func resetCursorRects() {
+            if #available(macOS 15.0, *) {
+                addCursorRect(bounds, cursor: .frameResize(position: .bottomRight, directions: .all))
+            } else {
+                addCursorRect(bounds, cursor: .crosshair)
             }
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        isDragging = true
-                        // Dragging down (positive y) = taller panel, top edge stays put
-                        if let panel = PluckkPanel.shared {
-                            panel.resizeHeight(to: panel.expandedHeight + value.translation.height)
-                        }
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                    }
-            )
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            startMouse = NSEvent.mouseLocation
+            startSize = window?.frame.size ?? .zero
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let now = NSEvent.mouseLocation
+            // Screen y grows upward: dragging down (smaller y) makes the card taller.
+            PluckkPanel.shared?.resize(width: startSize.width + (now.x - startMouse.x),
+                                       height: startSize.height - (now.y - startMouse.y))
+        }
     }
 }
 

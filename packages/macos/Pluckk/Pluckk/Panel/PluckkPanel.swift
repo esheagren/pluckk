@@ -253,28 +253,19 @@ class PluckkPanel: NSPanel {
         hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned)
     }
 
-    // MARK: - Resizing (left edge → width, bottom edge → height; the top-right corner stays put)
+    // MARK: - Resizing (one grip in the bottom-right corner; the top-left corner stays put)
 
-    func resize(to width: CGFloat) {
+    func resize(width: CGFloat, height: CGFloat) {
         guard isExpanded else { return }
         let newWidth = clampWidth(width)
-        var f = frame
-        f.origin.x += f.width - newWidth
-        f.size.width = newWidth
-        expandedWidth = newWidth
-        setFrame(f, display: true)
-        saveSize()
-        updateHostingView()
-    }
-
-    func resizeHeight(to height: CGFloat) {
-        guard isExpanded else { return }
         let newHeight = clampHeight(height)
         var f = frame
-        f.origin.y += f.height - newHeight
-        f.size.height = newHeight
+        f.origin.y = f.maxY - newHeight
+        f.size = NSSize(width: newWidth, height: newHeight)
+        expandedWidth = newWidth
         expandedHeight = newHeight
         setFrame(f, display: true)
         saveSize()
+        updateHostingView()
     }
 }
