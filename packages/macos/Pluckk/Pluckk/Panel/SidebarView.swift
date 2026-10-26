@@ -77,9 +77,11 @@ struct SidebarView: View {
 
 /// The strip across the top of the card. Dragging anywhere on it moves the window;
 /// the red dot on the left closes (collapses) the panel; the pin on the right keeps the
-/// card on the current desktop instead of following the user.
+/// card on the current desktop instead of following the user. Between them sits the
+/// toolbar: Create (card generation), Settings, and My cards (opens the web app).
 struct GripBar: View {
     let isPinned: Bool
+    @ObservedObject private var appState = AppState.shared
     @State private var closeHovering = false
     @State private var pinHovering = false
 
@@ -87,10 +89,18 @@ struct GripBar: View {
         ZStack {
             WindowDragArea()
 
-            Capsule()
-                .fill(Color.white.opacity(0.25))
-                .frame(width: 40, height: 4)
-                .allowsHitTesting(false)
+            HStack(spacing: 2) {
+                ToolbarTab(icon: "sparkles", label: "Create", isActive: appState.currentView == .generate) {
+                    appState.currentView = .generate
+                }
+                ToolbarTab(icon: "gearshape", label: "Settings", isActive: appState.currentView == .settings) {
+                    appState.currentView = .settings
+                }
+                ToolbarTab(icon: "rectangle.stack", label: "My cards", trailingIcon: "arrow.up.right", isActive: false) {
+                    if let url = URL(string: "\(Config.webappURL)/cards") { NSWorkspace.shared.open(url) }
+                }
+                .help("Open your cards in the browser")
+            }
 
             HStack {
                 Button(action: { PluckkPanel.shared?.collapse() }) {
@@ -112,7 +122,7 @@ struct GripBar: View {
                         .font(.system(size: 10, weight: .semibold))
                         .rotationEffect(.degrees(45))
                         .foregroundColor(isPinned ? Color(red: 1.0, green: 0.62, blue: 0.2)
-                                                  : Color.white.opacity(pinHovering ? 0.7 : 0.4))
+                                                  : Color.primary.opacity(pinHovering ? 0.7 : 0.4))
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }
@@ -122,7 +132,45 @@ struct GripBar: View {
             }
             .padding(.horizontal, 12)
         }
-        .frame(height: 26)
+        .frame(height: 36)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+        }
+    }
+}
+
+/// One item in the top toolbar: icon + label, highlighted when it is the current view.
+struct ToolbarTab: View {
+    let icon: String
+    let label: String
+    var trailingIcon: String? = nil
+    let isActive: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                Text(label)
+                    .font(.system(size: 12, weight: isActive ? .semibold : .medium))
+                if let trailingIcon {
+                    Image(systemName: trailingIcon)
+                        .font(.system(size: 8, weight: .semibold))
+                        .opacity(0.7)
+                }
+            }
+            .foregroundColor(Color.primary.opacity(isActive ? 0.95 : (hovering ? 0.8 : 0.5)))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(Color.primary.opacity(isActive ? 0.12 : (hovering ? 0.06 : 0)))
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
