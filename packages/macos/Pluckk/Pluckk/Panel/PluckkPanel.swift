@@ -5,6 +5,7 @@ import SwiftUI
 ///  - Collapsed: a pill at the bottom-centre of whichever screen the user last clicked on.
 ///  - Expanded: a landscape card (3:2 by default) that opens at the cursor and then stays
 ///    put until the user drags it by its grip bar. Size persists; position does not.
+///    It follows the user across desktops unless pinned.
 class PluckkPanel: NSPanel {
     // Shared instance for easy access from SwiftUI views
     static var shared: PluckkPanel?
@@ -37,6 +38,14 @@ class PluckkPanel: NSPanel {
     static let pushWindowAsideKey = "pushWindowAside"
     private var pushesWindowAside: Bool { UserDefaults.standard.bool(forKey: Self.pushWindowAsideKey) }
 
+    /// Pinned: the expanded card belongs to the desktop (Space) it was pinned on instead of
+    /// following the user to every desktop. The pill always follows. Persists across launches.
+    static let pinnedKey = "panelPinned"
+    private(set) var isPinned = UserDefaults.standard.bool(forKey: PluckkPanel.pinnedKey)
+
+    private static let followBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+    private static let pinnedBehavior: NSWindow.CollectionBehavior = [.managed, .fullScreenAuxiliary]
+
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
     }
@@ -65,11 +74,11 @@ class PluckkPanel: NSPanel {
         acceptsMouseMovedEvents = true
         isMovableByWindowBackground = false  // moved only via the grip bar
 
-        // Allow panel to appear on all spaces and work with full-screen apps
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        // Appear on all spaces (unless the card is pinned) and work with full-screen apps
+        applySpaceBehavior()
 
         // Set up content view
-        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth)
+        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned)
         hostingView = NSHostingView(rootView: sidebarView)
         // The panel's size is decided here, never by SwiftUI.
         hostingView?.sizingOptions = []
@@ -170,11 +179,26 @@ class PluckkPanel: NSPanel {
         }
     }
 
+    // MARK: - Pinning
+
+    func togglePinned() {
+        isPinned.toggle()
+        UserDefaults.standard.set(isPinned, forKey: Self.pinnedKey)
+        // Changing the behaviour while visible attaches the card to the current desktop.
+        applySpaceBehavior()
+        updateHostingView()
+    }
+
+    private func applySpaceBehavior() {
+        collectionBehavior = isExpanded && isPinned ? Self.pinnedBehavior : Self.followBehavior
+    }
+
     // MARK: - Expand / collapse
 
     func expand() {
         guard !isExpanded else { return }
         isExpanded = true
+        applySpaceBehavior()
 
         if pushesWindowAside {
             WindowResizer.shared.makeRoomForPanel(panelWidth: expandedWidth)
@@ -197,6 +221,7 @@ class PluckkPanel: NSPanel {
     func collapse() {
         guard isExpanded else { return }
         isExpanded = false
+        applySpaceBehavior()
 
         // No-op unless expand() resized a window
         WindowResizer.shared.restoreWindow()
@@ -225,7 +250,7 @@ class PluckkPanel: NSPanel {
     }
 
     private func updateHostingView() {
-        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth)
+        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned)
     }
 
     // MARK: - Resizing (left edge → width, bottom edge → height; the top-right corner stays put)

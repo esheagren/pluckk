@@ -4,6 +4,7 @@ import SwiftUI
 struct SidebarView: View {
     let isExpanded: Bool
     var panelWidth: CGFloat = 600
+    var isPinned: Bool = false
     @ObservedObject private var appState = AppState.shared
     @Environment(\.colorScheme) var colorScheme
 
@@ -52,7 +53,7 @@ struct SidebarView: View {
                 .allowsHitTesting(false)
 
             VStack(spacing: 0) {
-                GripBar()
+                GripBar(isPinned: isPinned)
 
                 // Main content based on current view
                 Group {
@@ -77,12 +78,15 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Grip bar (move handle + close button)
+// MARK: - Grip bar (move handle + close and pin buttons)
 
 /// The strip across the top of the card. Dragging anywhere on it moves the window;
-/// the red dot on the left closes (collapses) the panel.
+/// the red dot on the left closes (collapses) the panel; the pin on the right keeps the
+/// card on the current desktop instead of following the user.
 struct GripBar: View {
+    let isPinned: Bool
     @State private var closeHovering = false
+    @State private var pinHovering = false
 
     var body: some View {
         ZStack {
@@ -108,8 +112,20 @@ struct GripBar: View {
                 .onHover { closeHovering = $0 }
                 .help("Close")
                 Spacer()
+                Button(action: { PluckkPanel.shared?.togglePinned() }) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(45))
+                        .foregroundColor(isPinned ? Color(red: 1.0, green: 0.62, blue: 0.2)
+                                                  : Color.white.opacity(pinHovering ? 0.7 : 0.4))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { pinHovering = $0 }
+                .help(isPinned ? "Unpin: follow me across desktops" : "Pin to this desktop")
             }
-            .padding(.leading, 12)
+            .padding(.horizontal, 12)
         }
         .frame(height: 26)
     }

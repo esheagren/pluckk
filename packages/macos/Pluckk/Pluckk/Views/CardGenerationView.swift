@@ -499,8 +499,12 @@ struct CardGenerationView: View {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// A pinned card stays open on its desktop, ready for the next capture.
     private func collapsePanel() {
-        if let appDelegate = NSApp.delegate as? AppDelegate {
+        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+        if appDelegate.panel.isPinned {
+            appState.reset()
+        } else {
             appDelegate.panel.collapse()
         }
     }
