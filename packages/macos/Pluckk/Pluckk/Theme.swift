@@ -37,6 +37,12 @@ struct PluckkTheme {
         static let warning = Color(hex: "f39c12")
         static let error = Color(hex: "c0392b")
 
+        // The surface the cards sit on, and the cards themselves
+        static let table = Color(hex: "ececec")
+        static let card = Color(hex: "ffffff")
+        static let cardBorder = Color(hex: "dedede")
+        static let answerText = Color(hex: "4a4a4a")
+
         // Sand particle colors
         static let sandParticles: [Color] = [
             Color(red: 60/255, green: 60/255, blue: 60/255).opacity(0.6),
@@ -69,6 +75,12 @@ struct PluckkTheme {
         static let success = Color(hex: "27ae60")
         static let warning = Color(hex: "f39c12")
         static let error = Color(hex: "c0392b")
+
+        // The surface the cards sit on, and the cards themselves
+        static let table = Color(hex: "080808")
+        static let card = Color(hex: "1c1c1e")
+        static let cardBorder = Color(hex: "2e2e30")
+        static let answerText = Color(hex: "c7c7cc")
 
         // Sand particle colors - warm ochre tones
         static let sandParticles: [Color] = [

@@ -9,7 +9,7 @@ struct SidebarView: View {
     @Environment(\.colorScheme) var colorScheme
 
     private var backgroundColor: Color {
-        colorScheme == .dark ? PluckkTheme.Dark.background : PluckkTheme.Light.background
+        colorScheme == .dark ? PluckkTheme.Dark.table : PluckkTheme.Light.table
     }
 
     var body: some View {
@@ -44,13 +44,8 @@ struct SidebarView: View {
     @ViewBuilder
     private var expandedContent: some View {
         ZStack {
-            // Background color
+            // A plain, still surface so the cards are the focus
             backgroundColor.ignoresSafeArea()
-
-            // Sand animation background (full panel)
-            // allowsHitTesting(false) ensures clicks pass through to buttons
-            SandAnimationView()
-                .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 GripBar(isPinned: isPinned)

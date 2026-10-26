@@ -195,8 +195,10 @@ struct CardGenerationView: View {
     private var cardSelectionView: some View {
         VStack(spacing: 0) {
             // Cards list
+            // A plain VStack (a batch is 4-8 cards) so every card is dealt once, on arrival,
+            // rather than as a lazy row scrolls into view.
             ScrollView {
-                LazyVStack(spacing: 12) {
+                VStack(spacing: 14) {
                     ForEach(Array(appState.generatedCards.enumerated()), id: \.element.id) { index, card in
                         CardRowView(
                             card: card,
@@ -208,16 +210,22 @@ struct CardGenerationView: View {
                             onSaveEdit: { question, answer in saveEdit(index, question: question, answer: answer) },
                             onCancelEdit: { cancelEdit() }
                         )
+                        .modifier(DealIn(index: index))
                     }
                 }
-                .padding(16)
-                .padding(.top, 24)  // Extra breathing room at top
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
             }
 
-            Divider()
-
-            // Bottom actions
+            // Bottom actions, on a solid bar
             bottomActions
+                .background(colorScheme == .dark ? PluckkTheme.Dark.surface : PluckkTheme.Light.surface)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(colorScheme == .dark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder)
+                        .frame(height: 1)
+                }
         }
         .onAppear {
             // Don't auto-select - user must choose which cards to keep
@@ -510,6 +518,29 @@ struct CardGenerationView: View {
     }
 }
 
+// MARK: - Dealing
+
+/// Cards arrive one after another, sliding up into place like a dealt hand. Runs once per
+/// card; no motion afterwards, and none at all with Reduce Motion on.
+struct DealIn: ViewModifier {
+    let index: Int
+    @State private var dealt = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(dealt ? 1 : 0)
+            .offset(y: dealt ? 0 : 28)
+            .scaleEffect(dealt ? 1 : 0.96, anchor: .top)
+            .onAppear {
+                guard !reduceMotion else { dealt = true; return }
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85).delay(Double(index) * 0.07)) {
+                    dealt = true
+                }
+            }
+    }
+}
+
 // MARK: - Card Row View
 
 struct CardRowView: View {
@@ -524,6 +555,19 @@ struct CardRowView: View {
 
     @State private var editQuestion: String = ""
     @State private var editAnswer: String = ""
+    @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDark: Bool { colorScheme == .dark }
+    private var cardSurface: Color { isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card }
+    private var questionText: Color { isDark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary }
+    private var answerText: Color { isDark ? PluckkTheme.Dark.answerText : PluckkTheme.Light.answerText }
+    private var mutedText: Color { isDark ? PluckkTheme.Dark.textTertiary : PluckkTheme.Light.textTertiary }
+    private var rule: Color { isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder }
+    private var cardBorder: Color {
+        if isSelected { return PluckkTheme.accent }
+        return hovering ? rule.opacity(1) : rule.opacity(0.7)
+    }
 
     /// Left border accent color based on card type
     private var accentColor: Color {
@@ -558,7 +602,7 @@ struct CardRowView: View {
                     .frame(width: 3)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 // Header with checkbox and style badge
                 cardHeader
 
@@ -568,42 +612,50 @@ struct CardRowView: View {
                     displayModeContent
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(isSelected ? Color.accentColor.opacity(0.05) : Color.primary.opacity(0.03))
-        .cornerRadius(8)
+        .background(cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(cardBorder, lineWidth: isSelected ? 1.5 : 1)
         )
+        .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 10, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture { if !isEditing { onToggle() } }
+        .onHover { hovering = $0 }
     }
 
     private var cardHeader: some View {
-        HStack {
+        HStack(spacing: 8) {
             Button(action: onToggle) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(isSelected ? .accentColor : .secondary)
+                    .font(.system(size: 16))
+                    .foregroundColor(isSelected ? PluckkTheme.accent : mutedText)
             }
             .buttonStyle(.plain)
 
-            Text("[\(index + 1)]")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            Text("\(index + 1)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundColor(mutedText)
 
             // Style badge with appropriate color
-            Text(card.style.displayName)
-                .font(.caption2)
+            Text(card.style.displayName.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(badgeBackgroundColor.opacity(0.1))
+                .background(badgeBackgroundColor.opacity(0.14))
                 .foregroundColor(badgeBackgroundColor)
                 .cornerRadius(4)
 
             // Card count indicator for multi-card types
             if card.expandedCardCount > 1 {
                 Text("→ \(card.expandedCardCount) cards")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundColor(mutedText)
             }
 
             Spacer()
@@ -611,12 +663,35 @@ struct CardRowView: View {
             if !isEditing {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundColor(mutedText)
                 }
                 .buttonStyle(.plain)
+                .opacity(hovering ? 1 : 0.5)
             }
         }
+    }
+
+    // MARK: - Text styles
+
+    private func question(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundColor(questionText)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func answer(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 15))
+            .foregroundColor(answerText)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(rule).frame(height: 1)
     }
 
     private var badgeBackgroundColor: Color {
@@ -628,7 +703,7 @@ struct CardRowView: View {
         case .diagram:
             return PluckkTheme.diagramAccent
         default:
-            return .accentColor
+            return PluckkTheme.accent
         }
     }
 
@@ -675,68 +750,47 @@ struct CardRowView: View {
     // MARK: - Standard Card Content (Q&A, Cloze, etc.)
 
     private var standardContent: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Q: \(card.question)")
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .lineLimit(3)
-
-            Text("A: \(card.answer)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(3)
+        VStack(alignment: .leading, spacing: 10) {
+            question(card.question)
+            divider
+            answer(card.answer)
         }
     }
 
     // MARK: - Bidirectional Card Content
 
     private var bidirectionalContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             if let forward = card.forward {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Forward:")
-                        .font(.caption2)
-                        .foregroundColor(PluckkTheme.bidirectionalAccent)
-                        .fontWeight(.semibold)
-                    Text("Q: \(forward.question)")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                    Text("A: \(forward.answer)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                }
+                directionBlock("Forward", forward)
             }
-
+            if card.forward != nil && card.reverse != nil {
+                divider
+            }
             if let reverse = card.reverse {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Reverse:")
-                        .font(.caption2)
-                        .foregroundColor(PluckkTheme.bidirectionalAccent)
-                        .fontWeight(.semibold)
-                    Text("Q: \(reverse.question)")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                    Text("A: \(reverse.answer)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                }
+                directionBlock("Reverse", reverse)
             }
+        }
+    }
+
+    private func directionBlock(_ label: String, _ pair: QAPair) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundColor(PluckkTheme.bidirectionalAccent)
+            question(pair.question)
+            answer(pair.answer)
         }
     }
 
     // MARK: - List Card Content
 
     private var listContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // List name
             if let listName = card.listName {
-                Text(listName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                question(listName)
             }
 
             // Item chips
@@ -744,10 +798,10 @@ struct CardRowView: View {
                 FlowLayout(spacing: 6) {
                     ForEach(items, id: \.self) { item in
                         Text(item)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
+                            .font(.system(size: 13))
+                            .padding(.horizontal, 9)
                             .padding(.vertical, 4)
-                            .background(PluckkTheme.listAccent.opacity(0.1))
+                            .background(PluckkTheme.listAccent.opacity(0.14))
                             .foregroundColor(PluckkTheme.listAccent)
                             .cornerRadius(12)
                     }
@@ -756,8 +810,8 @@ struct CardRowView: View {
 
             // Note about testing
             Text("Each item tested individually + recall all")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .font(.system(size: 12))
+                .foregroundColor(mutedText)
                 .italic()
         }
     }
