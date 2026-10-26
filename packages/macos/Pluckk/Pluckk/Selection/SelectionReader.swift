@@ -74,12 +74,6 @@ class SelectionReader {
         return nil
     }
 
-    /// Gets text from the clipboard
-    func getClipboardText() -> String? {
-        let pasteboard = NSPasteboard.general
-        return pasteboard.string(forType: .string)
-    }
-
     /// Gets image from the clipboard
     func getClipboardImage() -> NSImage? {
         let pasteboard = NSPasteboard.general
@@ -146,63 +140,52 @@ class SelectionReader {
         return SourceContext(appName: appName, windowTitle: windowTitle)
     }
 
-    /// Simulates Cmd+C to copy selection (fallback method)
-    func simulateCopy() {
-        let source = CGEventSource(stateID: .hidSystemState)
+    /// Copies the frontmost app's selection with a synthetic ⌘C and returns it, then puts the
+    /// clipboard back as it was. For apps that don't expose their text to Accessibility
+    /// (Electron apps such as Notion and Slack). Returns nil unless the copy actually changed
+    /// the clipboard, so stale clipboard text is never mistaken for the selection.
+    func copySelection() -> String? {
+        let pasteboard = NSPasteboard.general
+        let saved: [NSPasteboardItem] = (pasteboard.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            }
+            return copy
+        }
+        let before = pasteboard.changeCount
 
-        // Key codes
-        let cmdKeyCode: CGKeyCode = 0x37  // Command
-        let cKeyCode: CGKeyCode = 0x08    // C
+        postCommandC()
 
-        // Cmd down
-        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true)
-        cmdDown?.flags = .maskCommand
-        cmdDown?.post(tap: .cghidEventTap)
+        // The target app copies asynchronously; give it up to ~300ms.
+        var copied: String?
+        for _ in 0..<30 {
+            usleep(10_000)
+            if pasteboard.changeCount != before {
+                copied = pasteboard.string(forType: .string)
+                break
+            }
+        }
 
-        // C down
-        let cDown = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: true)
-        cDown?.flags = .maskCommand
-        cDown?.post(tap: .cghidEventTap)
+        if pasteboard.changeCount != before {
+            pasteboard.clearContents()
+            if !saved.isEmpty { pasteboard.writeObjects(saved) }
+        }
 
-        // Brief delay
-        usleep(10000) // 10ms
-
-        // C up
-        let cUp = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: false)
-        cUp?.flags = .maskCommand
-        cUp?.post(tap: .cghidEventTap)
-
-        // Cmd up
-        let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
-        cmdUp?.post(tap: .cghidEventTap)
-
-        // Wait for clipboard to update
-        usleep(50000) // 50ms
+        guard let text = copied, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
     }
 
-    /// Gets selected text, falling back to clipboard simulation if needed
-    func getSelectedTextWithFallback() -> String? {
-        // First try direct Accessibility API
-        if let text = getSelectedText(), !text.isEmpty {
-            return text
-        }
-
-        // Save current clipboard
-        let pasteboard = NSPasteboard.general
-        let oldContents = pasteboard.string(forType: .string)
-
-        // Simulate Cmd+C
-        simulateCopy()
-
-        // Get new clipboard contents
-        let newContents = pasteboard.string(forType: .string)
-
-        // Restore old clipboard if it changed
-        if let old = oldContents, old != newContents {
-            pasteboard.clearContents()
-            pasteboard.setString(old, forType: .string)
-        }
-
-        return newContents
+    /// ⌘C as a single key event carrying the Command flag (no separate ⌘ key events, which the
+    /// double-tap detector would otherwise see).
+    private func postCommandC() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let cKeyCode: CGKeyCode = 0x08
+        let down = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: true)
+        down?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: false)
+        up?.flags = .maskCommand
+        up?.post(tap: .cghidEventTap)
     }
 }

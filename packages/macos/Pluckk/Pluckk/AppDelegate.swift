@@ -113,8 +113,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("AppDelegate: handleDoubleTap called, panel.isExpanded=\(panel.isExpanded)")
 
         // Try to get selected text via Accessibility API first
-        // This works even when panel is expanded since it reads from the frontmost app
-        if let selectedText = selectionReader.getSelectedText(), !selectedText.isEmpty {
+        // This works even when panel is expanded since it reads from the frontmost app.
+        // Electron apps (Notion, Slack) expose no focused element, so fall back to copying the
+        // selection — unless our own panel is key, in which case ⌘C would land on us.
+        let selected = selectionReader.getSelectedText().flatMap { $0.isEmpty ? nil : $0 }
+            ?? (panel.isKeyWindow ? nil : selectionReader.copySelection())
+        if let selectedText = selected {
             print("AppDelegate: Found selected text, capturing for card generation")
 
             // Only capture window if panel isn't expanded yet
@@ -155,15 +159,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Check clipboard for text
-        if let clipboardText = selectionReader.getClipboardText(), !clipboardText.isEmpty {
-            let context = selectionReader.getSourceContext()
-            appState.capturedContent = .text(clipboardText)
-            appState.sourceContext = context
-            appState.currentView = .generate
-            panel.expand()
-            return
-        }
+        // No fallback to clipboard text: it is usually stale (something copied earlier, from
+        // elsewhere), and generating from it silently produced cards about the wrong thing.
 
         // Nothing captured - show panel with prompt
         appState.capturedContent = nil
