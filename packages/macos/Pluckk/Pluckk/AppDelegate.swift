@@ -53,6 +53,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         doubleCmdDetector.onDoubleTap = { [weak self] in
             self?.handleDoubleTap()
         }
+        // Holding ⌘ on its own sends the card back down to the pill (no-op if already there).
+        doubleCmdDetector.onLongHold = { [weak self] in
+            self?.panel.collapse()
+        }
         doubleCmdDetector.start()
     }
 
