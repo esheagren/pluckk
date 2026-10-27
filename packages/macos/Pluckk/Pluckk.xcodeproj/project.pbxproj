@@ -20,6 +20,7 @@
 		011 /* PluckkAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* PluckkAPI.swift */; };
 		012 /* CardGenerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* CardGenerationView.swift */; };
 		015 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 115 /* SettingsView.swift */; };
+		013 /* PracticeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* PracticeView.swift */; };
 		016 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 116 /* Assets.xcassets */; };
 		017 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119 /* Config.swift */; };
 		018 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120 /* Theme.swift */; };
@@ -43,6 +44,7 @@
 		111 /* PluckkAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluckkAPI.swift; sourceTree = "<group>"; };
 		112 /* CardGenerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardGenerationView.swift; sourceTree = "<group>"; };
 		115 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		113 /* PracticeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeView.swift; sourceTree = "<group>"; };
 		116 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		117 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		118 /* Pluckk.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pluckk.entitlements; sourceTree = "<group>"; };
@@ -149,6 +151,7 @@
 				110 /* LoginView.swift */,
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
+				113 /* PracticeView.swift */,
 				121 /* PluckkLogo.swift */,
 			);
 			path = Views;
@@ -246,6 +249,7 @@
 				011 /* PluckkAPI.swift in Sources */,
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
+				013 /* PracticeView.swift in Sources */,
 				017 /* Config.swift in Sources */,
 				018 /* Theme.swift in Sources */,
 				019 /* PluckkLogo.swift in Sources */,

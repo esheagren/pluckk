@@ -208,6 +208,37 @@ class PluckkAPI {
         return try JSONDecoder().decode(MochiResponse.self, from: data).cardId
     }
 
+    // MARK: - Review (practice)
+    // The server builds the session, schedules each rating and computes the interval
+    // previews; the client only shows items and sends ratings back.
+
+    /// A session using the user's Mix settings (deck shares, new-card caps, session size).
+    func reviewSession(token: String) async throws -> [ReviewItem] {
+        struct Response: Decodable { let items: [ReviewItem] }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/session", json: ["mode": "scheduled"])
+        return try JSONDecoder().decode(Response.self, from: data).items
+    }
+
+    struct ReviewResult: Decodable {
+        let event_id: String
+        let previews: IntervalPreviews
+    }
+
+    func submitReview(token: String, item: ReviewItem, rating: ReviewRating, responseMs: Int) async throws -> ReviewResult {
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review", json: [
+            "card_id": item.card_id, "component_id": item.component_id,
+            "rating": rating.rawValue, "response_time_ms": responseMs,
+        ])
+        return try JSONDecoder().decode(ReviewResult.self, from: data)
+    }
+
+    /// Undo the rating with this event id; returns the item as it was before, when the server has it.
+    func undoReview(token: String, eventId: String) async throws -> ReviewItem? {
+        struct Response: Decodable { let item: ReviewItem? }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/undo", json: ["event_id": eventId])
+        return try JSONDecoder().decode(Response.self, from: data).item
+    }
+
     // MARK: - Decks (folders) and Mochi decks
 
     private struct FolderRow: Decodable { let id: String; let name: String }
@@ -264,6 +295,54 @@ class PluckkAPI {
 struct MochiDeck: Decodable {
     let id: String
     let name: String
+}
+
+/// One component of one card, as dealt by /api/v1/review/session (snake_case on the wire).
+struct ReviewItem: Decodable, Identifiable {
+    let card_id: String
+    let component_id: String
+    let question: String
+    let answer: String
+    let image_url: String?
+    let source_url: String?
+    var is_new: Bool
+    var previews: IntervalPreviews
+    let folder: Folder?
+
+    struct Folder: Decodable { let name: String? }
+
+    var id: String { "\(card_id):\(component_id)" }
+}
+
+struct IntervalPreviews: Decodable {
+    let again: String
+    let hard: String
+    let good: String
+    let easy: String
+
+    func label(for rating: ReviewRating) -> String {
+        switch rating {
+        case .again: return again
+        case .hard: return hard
+        case .good: return good
+        case .easy: return easy
+        }
+    }
+}
+
+enum ReviewRating: String, CaseIterable {
+    case again, hard, good, easy
+
+    var title: String { rawValue.capitalized }
+    /// Keys 1–4, as in the web app.
+    var key: Character {
+        switch self {
+        case .again: return "1"
+        case .hard: return "2"
+        case .good: return "3"
+        case .easy: return "4"
+        }
+    }
 }
 
 enum APIError: LocalizedError {

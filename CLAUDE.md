@@ -22,7 +22,7 @@ functions, Vercel Blob for card images, Google Sign-In → opaque bearer tokens.
 | `packages/shared` | `api/` (fetch client, session store, Google OIDC helpers), `constants/`, `utils/`; `scheduler/` only re-exports from core | imported by the others |
 | `packages/webapp` | Vite + React 18, pluckk.app. Hooks in `src/hooks/` call `@pluckk/shared/api`. | `npm run dev:webapp`, `npm run build:webapp` |
 | `packages/extension` | Manifest V3. `src/auth.ts` owns sign-in + the API client; background/content built by esbuild as IIFE. | `npm run build:extension`, load unpacked from `packages/extension/dist` |
-| `packages/macos` | Swift thin capture client: `⌘⌘` → Accessibility selection → panel → generate → `/api/v1/cards`. Signs in via `pluckk.app/auth/desktop` → `pluckk://` callback. No review/browse (webapp does that). | `xcodebuild -project packages/macos/Pluckk/Pluckk.xcodeproj -scheme Pluckk build` |
+| `packages/macos` | Swift client: `⌘⌘` → Accessibility selection (or synthetic ⌘C for Electron apps) → panel → generate → `/api/v1/cards`; native Practice tab over `/api/v1/review/session`, `review`, `review/undo`. Signs in via `pluckk.app/auth/desktop` → `pluckk://` callback. No browsing (webapp does that). | `xcodebuild -project packages/macos/Pluckk/Pluckk.xcodeproj -scheme Pluckk build` |
 
 ## Rules
 

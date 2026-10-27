@@ -16,10 +16,11 @@ enum CapturedContent: Equatable {
     }
 }
 
-/// The panel has two jobs: capture → generate, and settings. Review and browsing
-/// live in the web app (pluckk.app).
+/// The panel's three views: capture → generate, practice (native review), and settings.
+/// Browsing and deck management live in the web app (pluckk.app).
 enum PanelView {
     case generate
+    case practice
     case settings
 }
 
