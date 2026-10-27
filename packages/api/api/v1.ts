@@ -2,7 +2,7 @@
 //
 //   POST   auth/google            { credential, client }  → { token, user }
 //   DELETE auth/token                                      → revoke caller's token
-//   GET    cards[?source_url_prefix=]                      → cards with folder + due_at
+//   GET    cards[?source_url_prefix=&source=&folder_id=<uuid>|unfiled&limit=&offset=] → cards with folder + due_at
 //   POST   cards                                           → create
 //   PATCH  cards/:id  · DELETE cards/:id
 //   GET    folders · POST folders · PATCH folders/:id · DELETE folders/:id
@@ -12,7 +12,7 @@
 //   POST   images                 { card_id, image_data, mime_type } → { image_url }
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, desc, eq, gte, inArray, like, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { put } from '@vercel/blob';
@@ -92,12 +92,16 @@ function publicUser(u: schema.User) {
 }
 
 // ---------------------------------------------------------------- cards
-async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentifier?: string) {
+/** `folderId` narrows to one deck ('unfiled' = no deck); `page` slices the newest-first list. */
+async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentifier?: string,
+                         folderId?: string, page?: { limit: number; offset: number }) {
   const db = getDb();
   const conds = [eq(schema.cards.userId, userId), eq(schema.cards.isDeleted, false)];
   if (sourceUrlPrefix) conds.push(like(schema.cards.sourceUrl, sourceUrlPrefix.replace(/[%_]/g, '\\$&') + '%'));
   // Every card from one source (page, app window, imported deck): provenance.identifier is the clustering key.
   if (sourceIdentifier) conds.push(sql`${schema.cards.provenance}->>'identifier' = ${sourceIdentifier}`);
+  if (folderId === 'unfiled') conds.push(isNull(schema.cards.folderId));
+  else if (folderId) conds.push(eq(schema.cards.folderId, folderId));
   // A card has one schedule per component; its "due" is the earliest of them.
   const due = db.select({
     cardId: schema.cardReviewState.cardId,
@@ -109,14 +113,27 @@ async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentif
     .leftJoin(schema.folders, eq(schema.cards.folderId, schema.folders.id))
     .leftJoin(due, eq(due.cardId, schema.cards.id))
     .where(and(...conds))
-    .orderBy(desc(schema.cards.createdAt));
+    .orderBy(desc(schema.cards.createdAt))
+    .limit(page?.limit ?? Number.MAX_SAFE_INTEGER)
+    .offset(page?.offset ?? 0);
   return rows.map((r) => ({ ...snake<Record<string, unknown>>(r.card), folder: r.folder ? snake(r.folder) : null, due_at: r.dueAt ? isoTimestamp(r.dueAt) : null }));
 }
 
 router.on('GET', 'cards', authed(async (req, res, user) => {
   const prefix = typeof req.query.source_url_prefix === 'string' ? req.query.source_url_prefix : undefined;
   const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-  res.status(200).json(await listCards(user.id, prefix, source));
+  // Optional: one deck (?folder_id=<uuid>|unfiled) and a page (?limit=&offset=, limit ≤ 500).
+  const folder = typeof req.query.folder_id === 'string' ? req.query.folder_id : undefined;
+  if (folder && folder !== 'unfiled' && !/^[0-9a-f-]{36}$/i.test(folder)) {
+    res.status(400).json({ error: 'folder_id must be a uuid or "unfiled"' });
+    return;
+  }
+  const limit = Number(req.query.limit);
+  const offset = Number(req.query.offset);
+  const page = Number.isInteger(limit) && limit > 0
+    ? { limit: Math.min(limit, 500), offset: Number.isInteger(offset) && offset > 0 ? offset : 0 }
+    : undefined;
+  res.status(200).json(await listCards(user.id, prefix, source, folder, page));
 }));
 
 // Creates through the diary (card.ingest). Accepts the new {spec, provenance} form and the
