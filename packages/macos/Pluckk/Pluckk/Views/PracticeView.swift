@@ -58,7 +58,17 @@ final class PracticeSession: ObservableObject {
         timesUp = true
     }
 
-    func dismissTimesUp() { timesUp = false }
+    /// "Keep going" after a sprint: carry on untimed (no auto-start until Practice is reopened).
+    func dismissTimesUp() {
+        timesUp = false
+        autoStartSuppressed = true
+    }
+
+    /// Revealing a card starts a sprint if none is running: practising *is* starting. Suppressed
+    /// after "Keep going" or a manual stop, until the panel is next closed.
+    private(set) var autoStartSuppressed = false
+    func suppressAutoStart() { autoStartSuppressed = true }
+    func panelClosed() { autoStartSuppressed = false }
 
     /// Opening Practice after a finished (or failed) session deals a fresh one: more may be due.
     func refreshIfFinished() {
@@ -92,6 +102,9 @@ final class PracticeSession: ObservableObject {
     func reveal() {
         guard current != nil, !revealed else { return }
         withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+        if !SessionTimer.shared.isRunning && !autoStartSuppressed && !timesUp {
+            SessionTimer.shared.start()
+        }
     }
 
     func rate(_ rating: ReviewRating) {

@@ -238,6 +238,7 @@ class PluckkPanel: NSPanel {
 
         // Reset state when collapsing
         AppState.shared.reset()
+        PracticeSession.shared.panelClosed()
         updateHostingView()
     }
 

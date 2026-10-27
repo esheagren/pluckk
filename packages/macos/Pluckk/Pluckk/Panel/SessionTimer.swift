@@ -46,6 +46,12 @@ final class SessionTimer: ObservableObject {
         endsAt = nil
     }
 
+    /// Stopped by hand: don't let the next reveal start another sprint straight away.
+    func cancel() {
+        stop()
+        PracticeSession.shared.suppressAutoStart()
+    }
+
     private func tick() {
         now = Date()
         guard remaining <= 0 else { return }
@@ -55,16 +61,18 @@ final class SessionTimer: ObservableObject {
     }
 }
 
-/// The timer at the top of the panel: "▶ 4:00" to start, a countdown with a thin progress
-/// ring while running (click to stop).
+/// The timer at the top of the panel: "▶ 4:00" to start; once a sprint starts it grows (larger
+/// type and ring, a springy pop) and counts down, so the minutes are the focus. Click to stop.
 struct SessionTimerView: View {
     @ObservedObject private var timer = SessionTimer.shared
     @State private var hovering = false
+    @State private var pop = false
 
     var body: some View {
-        Button(action: { timer.isRunning ? timer.stop() : timer.start() }) {
-            HStack(spacing: 6) {
-                if timer.isRunning {
+        let running = timer.isRunning
+        Button(action: { running ? timer.cancel() : timer.start() }) {
+            HStack(spacing: running ? 8 : 6) {
+                if running {
                     ZStack {
                         Circle().stroke(Color.primary.opacity(0.15), lineWidth: 2)
                         Circle()
@@ -76,23 +84,33 @@ struct SessionTimerView: View {
                             Image(systemName: "stop.fill").font(.system(size: 5))
                         }
                     }
-                    .frame(width: 12, height: 12)
+                    .frame(width: 15, height: 15)
                     Text(clock(timer.remaining))
                 } else {
                     Image(systemName: "play.fill").font(.system(size: 8))
                     Text(clock(Double(timer.minutes * 60)))
                 }
             }
-            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-            .foregroundColor(timer.isRunning ? PluckkTheme.accent : Color.primary.opacity(hovering ? 0.85 : 0.55))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color.primary.opacity(hovering || timer.isRunning ? 0.08 : 0)))
+            .font(.system(size: running ? 16 : 12, weight: .semibold).monospacedDigit())
+            .foregroundColor(running ? PluckkTheme.accent : Color.primary.opacity(hovering ? 0.85 : 0.55))
+            .padding(.horizontal, running ? 14 : 10)
+            .padding(.vertical, running ? 5 : 4)
+            .background(Capsule().fill(running ? PluckkTheme.accent.opacity(0.14) : Color.primary.opacity(hovering ? 0.08 : 0)))
             .contentShape(Capsule())
+            .scaleEffect(pop ? 1.12 : 1)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(timer.isRunning ? "Stop the timer" : "Start a \(timer.minutes)-minute practice session")
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: running)
+        .onChange(of: running) { isOn in
+            guard isOn else { return }
+            // A brief pop on start, settling to the larger running size.
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { pop = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { pop = false }
+            }
+        }
+        .help(running ? "Stop the timer" : "Start a \(timer.minutes)-minute practice session")
     }
 
     private func clock(_ seconds: TimeInterval) -> String {
