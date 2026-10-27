@@ -33,6 +33,14 @@ final class PracticeSession: ObservableObject {
         if case .idle = phase { start() }
     }
 
+    /// Opening Practice after a finished (or failed) session deals a fresh one: more may be due.
+    func refreshIfFinished() {
+        switch phase {
+        case .done, .failed: start()
+        default: break
+        }
+    }
+
     func start() {
         guard let token = AuthManager.shared.accessToken else { return }
         phase = .loading
@@ -122,6 +130,8 @@ final class PracticeSession: ObservableObject {
 struct PracticeView: View {
     @ObservedObject private var session = PracticeSession.shared
     @Environment(\.colorScheme) private var colorScheme
+    /// The image shown full-panel after clicking it on the card.
+    @State private var zoomed: URL?
 
     private var isDark: Bool { colorScheme == .dark }
     private var primaryText: Color { isDark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary }
@@ -150,7 +160,28 @@ struct PracticeView: View {
                 if let item = session.current { reviewing(item) }
             }
         }
+        .overlay { if let zoomed { lightbox(zoomed) } }
         .onAppear { session.startIfNeeded() }
+        .onChange(of: session.current?.id) { _ in zoomed = nil }
+    }
+
+    private func lightbox(_ url: URL) -> some View {
+        ZStack {
+            Color.black.opacity(0.92)
+            AsyncImage(url: url) { image in
+                image.resizable().aspectRatio(contentMode: .fit)
+            } placeholder: {
+                ProgressView().controlSize(.small)
+            }
+            .padding(12)
+            Button("") { zoomed = nil }
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { zoomed = nil }
+        .help("Click or press Esc to close")
+        .transition(.opacity)
     }
 
     private func centered<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -163,12 +194,21 @@ struct PracticeView: View {
         VStack(spacing: 14) {
             header(item)
 
-            ScrollView {
+            // A card with an image fills the height so the image can use every spare point
+            // (and grows with the panel); text-only cards scroll if they run long.
+            if item.image_url != nil {
                 card(item)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
+                    .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    card(item)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 4)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
 
             if let notice = session.notice {
                 Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
@@ -225,7 +265,7 @@ struct PracticeView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if !session.revealed, let url = item.image_url.flatMap(URL.init(string:)) {
-                cardImage(url, maxHeight: 180)
+                cardImage(url)
             }
 
             if session.revealed {
@@ -238,7 +278,7 @@ struct PracticeView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
                 if let url = item.image_url.flatMap(URL.init(string:)) {
-                    cardImage(url, maxHeight: 140)
+                    cardImage(url)
                 }
                 if let source = item.source_url, let url = URL(string: source), url.scheme?.hasPrefix("http") == true {
                     Button(action: { NSWorkspace.shared.open(url) }) {
@@ -253,7 +293,7 @@ struct PracticeView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: item.image_url != nil ? .infinity : nil)
         .background(cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(rule.opacity(0.7), lineWidth: 1))
@@ -263,14 +303,21 @@ struct PracticeView: View {
         .id(item.id)
     }
 
-    private func cardImage(_ url: URL, maxHeight: CGFloat) -> some View {
+    /// Takes whatever room the text leaves (never less than 120pt); click to see it full-panel.
+    private func cardImage(_ url: URL) -> some View {
         AsyncImage(url: url) { image in
             image.resizable().aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } placeholder: {
             ProgressView().controlSize(.small)
         }
-        .frame(maxHeight: maxHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { zoomed = url } }
+        .onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("Click to enlarge")
     }
 
     @ViewBuilder

@@ -60,31 +60,24 @@ struct CardGenerationView: View {
                     .opacity(0.8)
             }
 
-            // Hint text matching extension
-            Text("Select text or paste screenshot")
+            Text("Select text anywhere and double-tap ⌘")
                 .font(.system(size: PluckkTheme.FontSize.small))
                 .foregroundColor(colorScheme == .dark
                     ? PluckkTheme.Dark.textSecondary
                     : PluckkTheme.Light.textSecondary)
 
-            // Question input placeholder (matches extension's "..." input)
-            TextField("...", text: .constant(""))
-                .textFieldStyle(.plain)
-                .font(.system(size: PluckkTheme.FontSize.body))
-                .foregroundColor(colorScheme == .dark
-                    ? PluckkTheme.Dark.textSecondary
-                    : PluckkTheme.Light.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 200)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: PluckkTheme.Radius.medium)
-                        .stroke(colorScheme == .dark
-                            ? PluckkTheme.Dark.border
-                            : PluckkTheme.Light.border, lineWidth: 1)
-                )
-                .disabled(true)
+            // A screenshot on the clipboard is offered here rather than picked up by ⌘⌘,
+            // which would otherwise grab whatever stale image was copied earlier.
+            if hasClipboardImage {
+                Button(action: useClipboardImage) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Use screenshot from clipboard")
+                    }
+                }
+                .buttonStyle(PillButtonStyle(prominent: false))
+            }
 
             Spacer()
         }
@@ -93,6 +86,14 @@ struct CardGenerationView: View {
     }
 
     @Environment(\.colorScheme) var colorScheme
+
+    private var hasClipboardImage: Bool { SelectionReader().getClipboardImage() != nil }
+
+    private func useClipboardImage() {
+        guard let image = SelectionReader().getClipboardImage() else { return }
+        appState.sourceContext = SourceContext(appName: "Clipboard", windowTitle: "")
+        appState.capturedContent = .image(image)
+    }
 
     // MARK: - Loading State
 

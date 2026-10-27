@@ -144,30 +144,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Panel is collapsed - capture window and check clipboard
-        print("AppDelegate: About to capture target window")
+        // Nothing selected: open on Practice. No clipboard fallback (text or image): the
+        // clipboard is usually stale, and it silently produced cards about the wrong thing.
+        // A clipboard screenshot is offered on the Create tab instead.
         WindowResizer.shared.captureTargetWindow()
-        print("AppDelegate: Capture complete, continuing with content detection")
-
-        // Check clipboard for image
-        if let image = selectionReader.getClipboardImage() {
-            let context = selectionReader.getSourceContext()
-            appState.capturedContent = .image(image)
-            appState.sourceContext = context
-            appState.currentView = .generate
-            panel.expand()
-            return
-        }
-
-        // No fallback to clipboard text: it is usually stale (something copied earlier, from
-        // elsewhere), and generating from it silently produced cards about the wrong thing.
-
-        // Nothing captured - show panel with prompt
         appState.capturedContent = nil
-        appState.currentView = .generate
-        print("AppDelegate: About to expand panel")
+        appState.currentView = .practice
+        PracticeSession.shared.refreshIfFinished()
         panel.expand()
-        print("AppDelegate: Panel expand called")
     }
 
     // MARK: - Permissions

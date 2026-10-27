@@ -84,7 +84,7 @@ struct SidebarView: View {
 /// The strip across the top of the card. Dragging anywhere on it moves the window;
 /// the red dot on the left closes (collapses) the panel; the pin on the right keeps the
 /// card on the current desktop instead of following the user. Between them sits the
-/// icon toolbar: Create (card generation), Practice (native review), and Settings.
+/// icon toolbar: Practice (native review), Create (card generation), and Settings.
 struct GripBar: View {
     let isPinned: Bool
     @ObservedObject private var appState = AppState.shared
@@ -96,11 +96,11 @@ struct GripBar: View {
             WindowDragArea()
 
             HStack(spacing: 4) {
-                ToolbarTab(icon: "sparkles", label: "Create", isActive: appState.currentView == .generate) {
-                    appState.currentView = .generate
-                }
                 ToolbarTab(icon: "rectangle.stack", label: "Practice", isActive: appState.currentView == .practice) {
                     appState.currentView = .practice
+                }
+                ToolbarTab(icon: "sparkles", label: "Create", isActive: appState.currentView == .generate) {
+                    appState.currentView = .generate
                 }
                 ToolbarTab(icon: "gearshape", label: "Settings", isActive: appState.currentView == .settings) {
                     appState.currentView = .settings
