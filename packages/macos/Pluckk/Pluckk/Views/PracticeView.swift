@@ -20,10 +20,9 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var notice: String?
     @Published private(set) var editing = false
-    /// A timed sprint ran out (SessionTimer); Practice shows the sprint summary until dismissed.
+    /// A timed sprint ran out (SessionTimer); Practice shows "Good job" and the practice grid
+    /// for a few seconds, then returns to the next card on its own.
     @Published private(set) var timesUp = false
-    /// Ratings since the current sprint started.
-    @Published private(set) var sprintCount = 0
 
     /// The latest undoable action: a rating, or a delete (with the queue entries it removed).
     private enum LastAction {
@@ -43,9 +42,8 @@ final class PracticeSession: ObservableObject {
         if case .idle = phase { start() }
     }
 
-    /// A timed sprint begins: count from zero and make sure there are cards to work through.
+    /// A timed sprint begins: make sure there are cards to work through.
     func beginSprint() {
-        sprintCount = 0
         timesUp = false
         switch phase {
         case .idle, .done, .failed: start()
@@ -55,17 +53,16 @@ final class PracticeSession: ObservableObject {
 
     func timeUp() {
         editing = false
+        revealed = false
         timesUp = true
     }
 
-    /// "Keep going" after a sprint: carry on untimed (no auto-start until Practice is reopened).
-    func dismissTimesUp() {
-        timesUp = false
-        autoStartSuppressed = true
-    }
+    /// The "Good job" moment is over: back to the next card, unrevealed. Nothing asks you to go
+    /// on; revealing it simply starts another sprint.
+    func finishCelebration() { timesUp = false }
 
     /// Revealing a card starts a sprint if none is running: practising *is* starting. Suppressed
-    /// after "Keep going" or a manual stop, until the panel is next closed.
+    /// after a manual stop, until the panel is next closed.
     private(set) var autoStartSuppressed = false
     func suppressAutoStart() { autoStartSuppressed = true }
     func panelClosed() { autoStartSuppressed = false }
@@ -118,7 +115,6 @@ final class PracticeSession: ObservableObject {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed)
                 last = .rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again)
                 reviewedCount += 1
-                sprintCount += 1
                 if rating == .again {
                     var requeued = item
                     requeued.previews = result.previews
@@ -152,7 +148,6 @@ final class PracticeSession: ObservableObject {
                     queue.insert(restored, at: i)
                     index = i
                     reviewedCount = max(0, reviewedCount - 1)
-                    sprintCount = max(0, sprintCount - 1)
                 case let .deletion(eventId, at, removed):
                     _ = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId)
                     let i = min(at, queue.count)
@@ -253,7 +248,8 @@ struct PracticeView: View {
     var body: some View {
         Group {
             if session.timesUp {
-                sprintSummary
+                SprintCelebration { session.finishCelebration() }
+                    .transition(.opacity)
             } else {
             switch session.phase {
             case .idle, .loading:
@@ -547,34 +543,6 @@ struct PracticeView: View {
         }
     }
 
-    // MARK: Sprint summary
-
-    private var sprintSummary: some View {
-        let minutes = SessionTimer.shared.minutes
-        return centered {
-            VStack(spacing: 14) {
-                Image(systemName: "timer")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundColor(PluckkTheme.accent)
-                Text("Time's up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(primaryText)
-                Text("\(session.sprintCount) card\(session.sprintCount == 1 ? "" : "s") in \(minutes) minute\(minutes == 1 ? "" : "s")")
-                    .font(.system(size: 13))
-                    .foregroundColor(mutedText)
-                HStack(spacing: 10) {
-                    Button("Keep going") { session.dismissTimesUp() }
-                        .buttonStyle(PillButtonStyle(prominent: false))
-                    Button("Another \(minutes) min") { SessionTimer.shared.start() }
-                        .buttonStyle(PillButtonStyle(prominent: true))
-                        .keyboardShortcut(.return, modifiers: [])
-                }
-                .padding(.top, 4)
-            }
-            .padding(24)
-        }
-    }
-
     // MARK: Done
 
     private var doneState: some View {
@@ -616,6 +584,45 @@ struct PracticeView: View {
         if n <= 140 { return 19 }
         if n <= 320 { return 16 }
         return 14
+    }
+}
+
+/// End of a sprint: "Good job", then the practice-day grid, held briefly, then it fades and the
+/// next card is there again. No buttons and no count to beat; a click skips it.
+struct SprintCelebration: View {
+    let onDone: () -> Void
+    @State private var showGrid = false
+    @State private var finished = false
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Text("Good job")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(PluckkTheme.accent)
+            ActivityGrid()
+                .frame(maxWidth: 320)
+                .opacity(showGrid ? 1 : 0)
+                .offset(y: showGrid ? 0 : 6)
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { finish() }
+        .task {
+            // A moment for "Good job", then the days, held for two seconds.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            withAnimation(.easeOut(duration: 0.35)) { showGrid = true }
+            try? await Task.sleep(nanoseconds: 2_350_000_000)
+            finish()
+        }
+    }
+
+    private func finish() {
+        guard !finished else { return }
+        finished = true
+        withAnimation(.easeInOut(duration: 0.4)) { onDone() }
     }
 }
 
