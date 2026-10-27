@@ -16,12 +16,12 @@ enum CapturedContent: Equatable {
     }
 }
 
-/// The panel's three views: practice (native review; ⌘⌘ with nothing selected), capture →
-/// generate, and settings.
-/// Browsing and deck management live in the web app (pluckk.app).
+/// The panel's views, one per icon in the left rail: practice (native review; ⌘⌘ with
+/// nothing selected), capture → generate, decks (browse and curate), and settings.
 enum PanelView {
     case generate
     case practice
+    case decks
     case settings
 }
 

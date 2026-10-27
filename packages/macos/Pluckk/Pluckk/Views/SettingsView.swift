@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @State private var launchAtLogin = false
     @AppStorage(PluckkPanel.pushWindowAsideKey) private var pushWindowAside = false
+    @AppStorage(SessionTimer.minutesKey) private var practiceMinutes = SessionTimer.defaultMinutes
     @State private var mochiApiKeyInput = ""
     @State private var isSavingMochi = false
     @State private var mochiDecks: [MochiDeck] = []
@@ -15,6 +16,10 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                practiceSection
+
+                Divider()
+
                 // Account Section
                 accountSection
 
@@ -38,6 +43,27 @@ struct SettingsView: View {
         .scrollIndicators(.hidden)
         .onAppear {
             loadSettings()
+        }
+    }
+
+    // MARK: - Practice Section
+
+    private var practiceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Practice")
+                .font(.headline)
+
+            ActivityGrid()
+
+            HStack {
+                Text("Timer length")
+                Spacer()
+                Stepper(value: $practiceMinutes, in: 1...30) {
+                    Text("\(practiceMinutes) min").monospacedDigit()
+                }
+                .fixedSize()
+            }
+            .font(.callout)
         }
     }
 

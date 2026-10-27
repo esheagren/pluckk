@@ -253,6 +253,40 @@ class PluckkAPI {
         return try JSONDecoder().decode(Response.self, from: data).event_id
     }
 
+    // MARK: - Library (decks, cards, activity)
+
+    /// Every deck with its card counts; the unfiled cards come back as a deck with no id.
+    func reviewDecks(token: String) async throws -> [DeckSummary] {
+        struct Response: Decodable { let decks: [DeckSummary] }
+        let data = try await send(token: token, method: "GET", path: "/api/v1/review/decks")
+        return try JSONDecoder().decode(Response.self, from: data).decks
+    }
+
+    /// One page of a deck's cards, newest first. `folderId` nil = unfiled.
+    func cards(token: String, folderId: String?, limit: Int, offset: Int) async throws -> [LibraryCard] {
+        let folder = folderId ?? "unfiled"
+        let data = try await send(token: token, method: "GET",
+                                  path: "/api/v1/cards?folder_id=\(folder)&limit=\(limit)&offset=\(offset)")
+        return try JSONDecoder().decode([LibraryCard].self, from: data)
+    }
+
+    /// Move a card to another deck (nil = unfiled).
+    func moveCard(token: String, cardId: String, folderId: String?) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)",
+                           json: ["folder_id": folderId.map { $0 as Any } ?? NSNull()])
+    }
+
+    /// Reviews per day over the last year, for the practice grid.
+    func reviewActivity(token: String) async throws -> [String: Int] {
+        struct Response: Decodable {
+            let reviews: [Day]
+            struct Day: Decodable { let review_date: String; let total_reviews: Int }
+        }
+        let data = try await send(token: token, method: "GET", path: "/api/v1/activity")
+        return Dictionary(try JSONDecoder().decode(Response.self, from: data).reviews.map { ($0.review_date, $0.total_reviews) },
+                          uniquingKeysWith: +)
+    }
+
     // MARK: - Decks (folders) and Mochi decks
 
     private struct FolderRow: Decodable { let id: String; let name: String }
@@ -309,6 +343,33 @@ class PluckkAPI {
 struct MochiDeck: Decodable {
     let id: String
     let name: String
+}
+
+/// A deck and its counts, from /api/v1/review/decks.
+struct DeckSummary: Decodable, Identifiable, Hashable {
+    let folder_id: String?
+    let name: String?
+    let is_paused: Bool
+    let total: Int
+    let new: Int
+    let due: Int
+
+    var id: String { folder_id ?? "unfiled" }
+    var title: String { name ?? "Unfiled" }
+}
+
+/// A card as listed by /api/v1/cards (only the fields the deck browser shows).
+struct LibraryCard: Decodable, Identifiable {
+    let id: String
+    var question: String
+    var answer: String
+    let style: String?
+    let image_url: String?
+    let due_at: String?
+    var folder_id: String?
+
+    /// Two-way and list cards have several components; the API edits those only by full spec.
+    var isSimple: Bool { style != "qa_bidirectional" && style != "cloze_list" }
 }
 
 /// One component of one card, as dealt by /api/v1/review/session (snake_case on the wire).

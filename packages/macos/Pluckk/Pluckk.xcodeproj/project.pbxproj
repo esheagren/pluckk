@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		023 /* ActivityGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125 /* ActivityGrid.swift */; };
+		022 /* DecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124 /* DecksView.swift */; };
+		014 /* SessionTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114 /* SessionTimer.swift */; };
 		001 /* PluckkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101 /* PluckkApp.swift */; };
 		002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102 /* AppDelegate.swift */; };
 		003 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103 /* AppState.swift */; };
@@ -30,6 +33,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		125 /* ActivityGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityGrid.swift; sourceTree = "<group>"; };
+		124 /* DecksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecksView.swift; sourceTree = "<group>"; };
+		114 /* SessionTimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTimer.swift; sourceTree = "<group>"; };
 		100 /* Pluckk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pluckk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		101 /* PluckkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluckkApp.swift; sourceTree = "<group>"; };
 		102 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -112,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				104 /* PluckkPanel.swift */,
+				114 /* SessionTimer.swift */,
 				105 /* SidebarView.swift */,
 				106 /* AmbientStripView.swift */,
 				122 /* SandAnimationView.swift */,
@@ -152,6 +159,8 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				125 /* ActivityGrid.swift */,
+				124 /* DecksView.swift */,
 				121 /* PluckkLogo.swift */,
 			);
 			path = Views;
@@ -250,6 +259,9 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				023 /* ActivityGrid.swift in Sources */,
+				022 /* DecksView.swift in Sources */,
+				014 /* SessionTimer.swift in Sources */,
 				017 /* Config.swift in Sources */,
 				018 /* Theme.swift in Sources */,
 				019 /* PluckkLogo.swift in Sources */,

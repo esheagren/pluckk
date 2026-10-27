@@ -20,6 +20,10 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var notice: String?
     @Published private(set) var editing = false
+    /// A timed sprint ran out (SessionTimer); Practice shows the sprint summary until dismissed.
+    @Published private(set) var timesUp = false
+    /// Ratings since the current sprint started.
+    @Published private(set) var sprintCount = 0
 
     /// The latest undoable action: a rating, or a delete (with the queue entries it removed).
     private enum LastAction {
@@ -39,6 +43,23 @@ final class PracticeSession: ObservableObject {
     func startIfNeeded() {
         if case .idle = phase { start() }
     }
+
+    /// A timed sprint begins: count from zero and make sure there are cards to work through.
+    func beginSprint() {
+        sprintCount = 0
+        timesUp = false
+        switch phase {
+        case .idle, .done, .failed: start()
+        default: break
+        }
+    }
+
+    func timeUp() {
+        editing = false
+        timesUp = true
+    }
+
+    func dismissTimesUp() { timesUp = false }
 
     /// Opening Practice after a finished (or failed) session deals a fresh one: more may be due.
     func refreshIfFinished() {
@@ -85,6 +106,7 @@ final class PracticeSession: ObservableObject {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed)
                 last = .rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again)
                 reviewedCount += 1
+                sprintCount += 1
                 if rating == .again {
                     var requeued = item
                     requeued.previews = result.previews
@@ -118,6 +140,7 @@ final class PracticeSession: ObservableObject {
                     queue.insert(restored, at: i)
                     index = i
                     reviewedCount = max(0, reviewedCount - 1)
+                    sprintCount = max(0, sprintCount - 1)
                 case let .deletion(eventId, at, removed):
                     _ = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId)
                     let i = min(at, queue.count)
@@ -217,6 +240,9 @@ struct PracticeView: View {
 
     var body: some View {
         Group {
+            if session.timesUp {
+                sprintSummary
+            } else {
             switch session.phase {
             case .idle, .loading:
                 centered { ProgressView().controlSize(.small) }
@@ -233,6 +259,7 @@ struct PracticeView: View {
                 doneState
             case .reviewing:
                 if let item = session.current { reviewing(item) }
+            }
             }
         }
         .overlay { if let zoomed { lightbox(zoomed) } }
@@ -508,6 +535,34 @@ struct PracticeView: View {
             }
             .buttonStyle(PillButtonStyle(prominent: true))
             .keyboardShortcut(.space, modifiers: [])
+        }
+    }
+
+    // MARK: Sprint summary
+
+    private var sprintSummary: some View {
+        let minutes = SessionTimer.shared.minutes
+        return centered {
+            VStack(spacing: 14) {
+                Image(systemName: "timer")
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundColor(PluckkTheme.accent)
+                Text("Time's up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(primaryText)
+                Text("\(session.sprintCount) card\(session.sprintCount == 1 ? "" : "s") in \(minutes) minute\(minutes == 1 ? "" : "s")")
+                    .font(.system(size: 13))
+                    .foregroundColor(mutedText)
+                HStack(spacing: 10) {
+                    Button("Keep going") { session.dismissTimesUp() }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                    Button("Another \(minutes) min") { SessionTimer.shared.start() }
+                        .buttonStyle(PillButtonStyle(prominent: true))
+                        .keyboardShortcut(.return, modifiers: [])
+                }
+                .padding(.top, 4)
+            }
+            .padding(24)
         }
     }
 

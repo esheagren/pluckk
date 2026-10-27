@@ -51,6 +51,10 @@ struct SidebarView: View {
                 GripBar(isPinned: isPinned)
                     .zIndex(1)  // hover labels draw over the content below
 
+                HStack(spacing: 0) {
+                    NavRail()
+                        .zIndex(1)  // hover labels draw over the content beside it
+
                 // Main content based on current view
                 Group {
                     switch appState.currentView {
@@ -66,11 +70,18 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    case .decks:
+                        if appState.isAuthenticated {
+                            DecksView()
+                        } else {
+                            LoginView()
+                        }
                     case .settings:
                         SettingsView()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
 
             // One resize grip, bottom-right corner
@@ -84,10 +95,9 @@ struct SidebarView: View {
 /// The strip across the top of the card. Dragging anywhere on it moves the window;
 /// the red dot on the left closes (collapses) the panel; the pin on the right keeps the
 /// card on the current desktop instead of following the user. Between them sits the
-/// icon toolbar: Practice (native review), Create (card generation), and Settings.
+/// practice timer. (Navigation is the rail on the left; see NavRail.)
 struct GripBar: View {
     let isPinned: Bool
-    @ObservedObject private var appState = AppState.shared
     @State private var closeHovering = false
     @State private var pinHovering = false
 
@@ -95,17 +105,7 @@ struct GripBar: View {
         ZStack {
             WindowDragArea()
 
-            HStack(spacing: 4) {
-                ToolbarTab(icon: "rectangle.stack", label: "Practice", isActive: appState.currentView == .practice) {
-                    appState.currentView = .practice
-                }
-                ToolbarTab(icon: "sparkles", label: "Create", isActive: appState.currentView == .generate) {
-                    appState.currentView = .generate
-                }
-                ToolbarTab(icon: "gearshape", label: "Settings", isActive: appState.currentView == .settings) {
-                    appState.currentView = .settings
-                }
-            }
+            SessionTimerView()
 
             HStack {
                 Button(action: { PluckkPanel.shared?.collapse() }) {
@@ -144,12 +144,40 @@ struct GripBar: View {
     }
 }
 
+/// The thin icon rail on the left: Practice (the default), Create, Decks; Settings at the foot.
+struct NavRail: View {
+    @ObservedObject private var appState = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 6) {
+            tab(.practice, icon: "rectangle.stack", label: "Practice")
+            tab(.generate, icon: "sparkles", label: "Create")
+            tab(.decks, icon: "square.grid.2x2", label: "Decks")
+            Spacer()
+            tab(.settings, icon: "gearshape", label: "Settings")
+        }
+        .padding(.vertical, 12)
+        .frame(width: 44)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+        }
+    }
+
+    private func tab(_ view: PanelView, icon: String, label: String) -> some View {
+        ToolbarTab(icon: icon, label: label, labelEdge: .trailing, isActive: appState.currentView == view) {
+            appState.currentView = view
+        }
+    }
+}
+
 /// One item in the top toolbar: an icon, highlighted when it is the current view. Its name
 /// appears in a small label underneath after a short hover. (A system tooltip is unreliable
 /// here: the panel never activates the app, and macOS shows tooltips only for active apps.)
 struct ToolbarTab: View {
     let icon: String
     let label: String
+    /// Where the hover label appears: below (top bar) or to the right (left rail).
+    var labelEdge: Edge = .bottom
     let isActive: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -181,7 +209,7 @@ struct ToolbarTab: View {
                 showLabel = false
             }
         }
-        .overlay(alignment: .bottom) {
+        .overlay(alignment: labelEdge == .bottom ? .bottom : .trailing) {
             if showLabel {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
@@ -190,7 +218,9 @@ struct ToolbarTab: View {
                     .padding(.vertical, 4)
                     .background(Capsule().fill(Color.black.opacity(0.85)))
                     .fixedSize()
-                    .offset(y: 28)
+                    // In the rail: the label's left edge sits 8pt right of the icon.
+                    .alignmentGuide(.trailing) { d in labelEdge == .bottom ? d[.trailing] : -8 }
+                    .offset(y: labelEdge == .bottom ? 28 : 0)
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
