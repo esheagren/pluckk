@@ -534,12 +534,12 @@ struct PracticeView: View {
             Button(action: { session.reveal() }) {
                 HStack(spacing: 8) {
                     Text("Show answer")
-                    Text("Space").font(.system(size: 11, weight: .medium)).opacity(0.6)
+                    KeyCap("space")
                 }
-                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(PillButtonStyle(prominent: true))
+            .buttonStyle(QuietButtonStyle())
             .keyboardShortcut(.space, modifiers: [])
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -645,6 +645,50 @@ struct SprintBar: View {
             .frame(height: 3)
             .transition(.opacity)
         }
+    }
+}
+
+/// A small, quiet capsule: hairline outline, muted text that brightens on hover.
+struct QuietButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        QuietButton(configuration: configuration, isDark: colorScheme == .dark)
+    }
+
+    private struct QuietButton: View {
+        let configuration: ButtonStyleConfiguration
+        let isDark: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color.primary.opacity(hovering ? 0.9 : 0.6))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color.primary.opacity(hovering ? 0.06 : 0)))
+                .overlay(Capsule().stroke(isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder, lineWidth: 1))
+                .contentShape(Capsule())
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+    }
+}
+
+/// A key name drawn as a tiny keycap.
+struct KeyCap: View {
+    let key: String
+    init(_ key: String) { self.key = key }
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundColor(Color.primary.opacity(0.45))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).stroke(Color.primary.opacity(0.18), lineWidth: 1))
     }
 }
 
