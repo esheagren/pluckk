@@ -310,7 +310,7 @@ struct PracticeView: View {
 
             // A card with an image fills the height so the image can use every spare point
             // (and grows with the panel); text-only cards scroll if they run long.
-            if item.image_url != nil {
+            if imageShowing(item) {
                 card(item)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
@@ -377,7 +377,7 @@ struct PracticeView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
-        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: item.image_url != nil ? .infinity : nil)
+        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: imageShowing(item) ? .infinity : nil)
         .background(cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(rule.opacity(0.7), lineWidth: 1))
@@ -390,6 +390,11 @@ struct PracticeView: View {
         .id(item.id)
     }
 
+    /// Whether the card's image is on screen now (see ReviewItem.imageIsQuestion).
+    private func imageShowing(_ item: ReviewItem) -> Bool {
+        item.image_url != nil && !session.editing && (session.revealed || item.imageIsQuestion)
+    }
+
     private func cardContent(_ item: ReviewItem) -> some View {
         VStack(spacing: 16) {
             Text(item.question)
@@ -399,7 +404,7 @@ struct PracticeView: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !session.revealed, let url = item.image_url.flatMap(URL.init(string:)) {
+            if !session.revealed, item.imageIsQuestion, let url = item.image_url.flatMap(URL.init(string:)) {
                 cardImage(url)
             }
 

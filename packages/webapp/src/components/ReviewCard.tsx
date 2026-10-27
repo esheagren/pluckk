@@ -12,6 +12,14 @@ function fitText(text: string): string {
   return 'text-base leading-relaxed';
 }
 
+/**
+ * Only imported image-question decks (the art deck, stored under anki-media/) show the picture
+ * on the question side; elsewhere the image is a screenshot or illustration of the answer.
+ */
+function imageIsQuestion(url: string | null | undefined): url is string {
+  return !!url && url.includes('/anki-media/');
+}
+
 export default function ReviewCard({
   card,
   isFlipped,
@@ -179,9 +187,9 @@ export default function ReviewCard({
             <div className={`${fitText(displayQuestion)} text-center text-gray-800 dark:text-gray-100 [text-wrap:balance]`}>
               {displayQuestion}
             </div>
-            {/* Image on the front too — for imported image-question decks (e.g. art)
-                the picture IS the question. */}
-            {card.image_url && (
+            {/* Image on the front only for imported image-question decks (e.g. art), where
+                the picture IS the question; otherwise it would give the answer away. */}
+            {imageIsQuestion(card.image_url) && (
               <img
                 src={card.image_url}
                 alt=""

@@ -388,6 +388,11 @@ struct ReviewItem: Decodable, Identifiable {
     struct Folder: Decodable { let name: String? }
 
     var id: String { "\(card_id):\(component_id)" }
+
+    /// Only imported image-question decks (the art deck, stored under anki-media/) show the
+    /// picture before the answer. Everywhere else the image is a screenshot or illustration of
+    /// the answer, so it waits for the reveal.
+    var imageIsQuestion: Bool { image_url?.contains("/anki-media/") == true }
 }
 
 struct IntervalPreviews: Decodable {
