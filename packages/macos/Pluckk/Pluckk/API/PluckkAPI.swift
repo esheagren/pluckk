@@ -239,6 +239,20 @@ class PluckkAPI {
         return try JSONDecoder().decode(Response.self, from: data).item
     }
 
+    /// Edit a single-component card's question and answer. (Two-way and list cards need a
+    /// full spec; the API rejects a plain question/answer edit for those.)
+    func updateCard(token: String, cardId: String, question: String, answer: String) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)",
+                           json: ["question": question, "answer": answer])
+    }
+
+    /// Delete a card (all its components). Returns the event id, which /review/undo reverses.
+    func deleteCard(token: String, cardId: String) async throws -> String? {
+        struct Response: Decodable { let event_id: String? }
+        let data = try await send(token: token, method: "DELETE", path: "/api/v1/cards/\(cardId)")
+        return try JSONDecoder().decode(Response.self, from: data).event_id
+    }
+
     // MARK: - Decks (folders) and Mochi decks
 
     private struct FolderRow: Decodable { let id: String; let name: String }
@@ -301,8 +315,9 @@ struct MochiDeck: Decodable {
 struct ReviewItem: Decodable, Identifiable {
     let card_id: String
     let component_id: String
-    let question: String
-    let answer: String
+    var question: String
+    var answer: String
+    let component_count: Int
     let image_url: String?
     let source_url: String?
     var is_new: Bool

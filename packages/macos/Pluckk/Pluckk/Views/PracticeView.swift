@@ -19,9 +19,16 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var reviewedCount = 0
     @Published private(set) var busy = false
     @Published private(set) var notice: String?
+    @Published private(set) var editing = false
+
+    /// The latest undoable action: a rating, or a delete (with the queue entries it removed).
+    private enum LastAction {
+        case rating(eventId: String, item: ReviewItem, index: Int, wasAgain: Bool)
+        case deletion(eventId: String, index: Int, removed: [ReviewItem])
+    }
 
     private var shownAt = Date()
-    private var last: (eventId: String, item: ReviewItem, index: Int, wasAgain: Bool)?
+    private var last: LastAction?
 
     var current: ReviewItem? { index < queue.count ? queue[index] : nil }
     var canUndo: Bool { last != nil && !busy }
@@ -52,6 +59,7 @@ final class PracticeSession: ObservableObject {
                 index = 0
                 reviewedCount = 0
                 revealed = false
+                editing = false
                 last = nil
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
@@ -67,7 +75,7 @@ final class PracticeSession: ObservableObject {
     }
 
     func rate(_ rating: ReviewRating) {
-        guard let item = current, revealed, !busy, let token = AuthManager.shared.accessToken else { return }
+        guard let item = current, revealed, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
         busy = true
         notice = nil
         let elapsed = Int(Date().timeIntervalSince(shownAt) * 1000)
@@ -75,7 +83,7 @@ final class PracticeSession: ObservableObject {
             defer { busy = false }
             do {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed)
-                last = (result.event_id, item, index, rating == .again)
+                last = .rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again)
                 reviewedCount += 1
                 if rating == .again {
                     var requeued = item
@@ -94,20 +102,28 @@ final class PracticeSession: ObservableObject {
     }
 
     func undo() {
-        guard let last, !busy, let token = AuthManager.shared.accessToken else { return }
+        guard let last, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
         busy = true
         notice = nil
         Task {
             defer { busy = false }
             do {
-                let restored = try await PluckkAPI.shared.undoReview(token: token, eventId: last.eventId) ?? last.item
-                // An "again" moved the item to the end; undo is only offered for the latest
-                // rating, so that copy is still the last one.
-                if last.wasAgain, !queue.isEmpty { queue.removeLast() }
-                let at = min(last.index, queue.count)
-                queue.insert(restored, at: at)
-                index = at
-                reviewedCount = max(0, reviewedCount - 1)
+                switch last {
+                case let .rating(eventId, item, at, wasAgain):
+                    let restored = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) ?? item
+                    // An "again" moved the item to the end; undo is only offered for the latest
+                    // action, so that copy is still the last one.
+                    if wasAgain, !queue.isEmpty { queue.removeLast() }
+                    let i = min(at, queue.count)
+                    queue.insert(restored, at: i)
+                    index = i
+                    reviewedCount = max(0, reviewedCount - 1)
+                case let .deletion(eventId, at, removed):
+                    _ = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId)
+                    let i = min(at, queue.count)
+                    queue.insert(contentsOf: removed, at: i)
+                    index = i
+                }
                 self.last = nil
                 phase = .reviewing
                 revealed = false
@@ -118,7 +134,63 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    // MARK: Edit and delete
+
+    /// Two-way and list cards have several components; the API edits those only by full spec.
+    var canEditCurrent: Bool { (current?.component_count ?? 0) == 1 }
+
+    func beginEdit() {
+        guard canEditCurrent, !busy else { return }
+        notice = nil
+        editing = true
+    }
+
+    func cancelEdit() { editing = false }
+
+    func saveEdit(question: String, answer: String) {
+        guard let item = current, editing, !busy, let token = AuthManager.shared.accessToken else { return }
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !a.isEmpty else { notice = "Question and answer can't be empty."; return }
+        if q == item.question && a == item.answer { editing = false; return }
+        busy = true
+        notice = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await PluckkAPI.shared.updateCard(token: token, cardId: item.card_id, question: q, answer: a)
+                for i in queue.indices where queue[i].card_id == item.card_id {
+                    queue[i].question = q
+                    queue[i].answer = a
+                }
+                editing = false
+            } catch {
+                notice = "Couldn't save the edit: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func deleteCurrent() {
+        guard let item = current, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
+        busy = true
+        notice = nil
+        Task {
+            defer { busy = false }
+            do {
+                let eventId = try await PluckkAPI.shared.deleteCard(token: token, cardId: item.card_id)
+                // Drop every component of this card still ahead in the queue.
+                let removed = queue[index...].filter { $0.card_id == item.card_id }
+                queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != item.card_id }
+                last = eventId.map { .deletion(eventId: $0, index: index, removed: removed) }
+                advance()
+            } catch {
+                notice = "Couldn't delete the card: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func advance() {
+        editing = false
         revealed = false
         shownAt = Date()
         if index >= queue.count { phase = .done }
@@ -132,6 +204,9 @@ struct PracticeView: View {
     @Environment(\.colorScheme) private var colorScheme
     /// The image shown full-panel after clicking it on the card.
     @State private var zoomed: URL?
+    @State private var editQuestion = ""
+    @State private var editAnswer = ""
+    @State private var confirmingDelete = false
 
     private var isDark: Bool { colorScheme == .dark }
     private var primaryText: Color { isDark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary }
@@ -162,7 +237,10 @@ struct PracticeView: View {
         }
         .overlay { if let zoomed { lightbox(zoomed) } }
         .onAppear { session.startIfNeeded() }
-        .onChange(of: session.current?.id) { _ in zoomed = nil }
+        .onChange(of: session.current?.id) { _ in
+            zoomed = nil
+            confirmingDelete = false
+        }
     }
 
     private func lightbox(_ url: URL) -> some View {
@@ -238,15 +316,17 @@ struct PracticeView: View {
                     .cornerRadius(4)
             }
             Spacer()
-            Button(action: { session.undo() }) {
-                Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .semibold))
+            if !session.editing {
+                Button(action: { session.undo() }) {
+                    Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(mutedText)
+                .opacity(session.canUndo ? 1 : 0)
+                .disabled(!session.canUndo)
+                .keyboardShortcut("z", modifiers: [])
+                .help("Undo (Z)")
             }
-            .buttonStyle(.plain)
-            .foregroundColor(mutedText)
-            .opacity(session.canUndo ? 1 : 0)
-            .disabled(!session.canUndo)
-            .keyboardShortcut("z", modifiers: [])
-            .help("Undo last rating (Z)")
 
             Text("\(session.remaining) left")
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -256,6 +336,29 @@ struct PracticeView: View {
     }
 
     private func card(_ item: ReviewItem) -> some View {
+        Group {
+            if session.editing {
+                editor
+            } else {
+                cardContent(item)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: item.image_url != nil ? .infinity : nil)
+        .background(cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(rule.opacity(0.7), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            if !session.editing { cardActions.padding(10) }
+        }
+        .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture { if !session.editing { session.reveal() } }
+        .id(item.id)
+    }
+
+    private func cardContent(_ item: ReviewItem) -> some View {
         VStack(spacing: 16) {
             Text(item.question)
                 .font(.system(size: fittedSize(item.question), weight: .semibold))
@@ -291,16 +394,65 @@ struct PracticeView: View {
                 }
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 28)
-        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: item.image_url != nil ? .infinity : nil)
-        .background(cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(rule.opacity(0.7), lineWidth: 1))
-        .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
-        .contentShape(Rectangle())
-        .onTapGesture { session.reveal() }
-        .id(item.id)
+    }
+
+    /// Edit and delete, top-right of the card. Delete asks once, inline; Z undoes it.
+    @ViewBuilder
+    private var cardActions: some View {
+        if confirmingDelete {
+            HStack(spacing: 8) {
+                Text("Delete this card?").font(.system(size: 12)).foregroundColor(mutedText)
+                Button("Cancel") { confirmingDelete = false }
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundColor(mutedText)
+                Button("Delete") {
+                    confirmingDelete = false
+                    session.deleteCurrent()
+                }
+                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundColor(Color(hex: "e5534b"))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Capsule().fill(cardSurface))
+            .overlay(Capsule().stroke(rule, lineWidth: 1))
+        } else {
+            HStack(spacing: 2) {
+                CardIconButton(systemName: "pencil",
+                               help: session.canEditCurrent ? "Edit card" : "Two-way and list cards are edited in the web app") {
+                    editQuestion = session.current?.question ?? ""
+                    editAnswer = session.current?.answer ?? ""
+                    session.beginEdit()
+                }
+                .disabled(!session.canEditCurrent || session.busy)
+                CardIconButton(systemName: "trash", help: "Delete card", hoverTint: Color(hex: "e5534b")) {
+                    confirmingDelete = true
+                }
+                .disabled(session.busy)
+            }
+        }
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            editField("Question", text: $editQuestion, weight: .semibold)
+            editField("Answer", text: $editAnswer, weight: .regular)
+        }
+    }
+
+    private func editField(_ label: String, text: Binding<String>, weight: Font.Weight) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                .foregroundColor(mutedText)
+            TextField(label, text: text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: weight))
+                .foregroundColor(primaryText)
+                .lineLimit(1...10)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isDark ? PluckkTheme.Dark.table : PluckkTheme.Light.table)
+                )
+        }
     }
 
     /// Takes whatever room the text leaves (never less than 120pt); click to see it full-panel.
@@ -322,7 +474,23 @@ struct PracticeView: View {
 
     @ViewBuilder
     private func footer(_ item: ReviewItem) -> some View {
-        if session.revealed {
+        if session.editing {
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Cancel") { session.cancelEdit() }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .keyboardShortcut(.cancelAction)
+                Button(action: { session.saveEdit(question: editQuestion, answer: editAnswer) }) {
+                    HStack(spacing: 6) {
+                        Text("Save")
+                        Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
+                    }
+                }
+                .buttonStyle(PillButtonStyle(prominent: true))
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(session.busy)
+            }
+        } else if session.revealed {
             HStack(spacing: 8) {
                 ForEach(ReviewRating.allCases, id: \.self) { rating in
                     RatingButton(rating: rating, interval: item.previews.label(for: rating)) { session.rate(rating) }
@@ -384,6 +552,31 @@ struct PracticeView: View {
         if n <= 140 { return 19 }
         if n <= 320 { return 16 }
         return 14
+    }
+}
+
+/// A small icon button in the card's top-right corner.
+struct CardIconButton: View {
+    let systemName: String
+    let help: String
+    var hoverTint: Color? = nil
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(hovering && isEnabled ? (hoverTint ?? Color.primary.opacity(0.8)) : Color.primary.opacity(0.35))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color.primary.opacity(hovering && isEnabled ? 0.08 : 0)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.4)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
 
