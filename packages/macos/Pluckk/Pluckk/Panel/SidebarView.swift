@@ -145,6 +145,7 @@ struct GripBar: View {
 }
 
 /// The thin icon rail on the left: Practice (the default), Create, Decks; Settings at the foot.
+/// Hovering an icon slides its name out to the right (RailTab).
 struct NavRail: View {
     @ObservedObject private var appState = AppState.shared
 
@@ -164,67 +165,60 @@ struct NavRail: View {
     }
 
     private func tab(_ view: PanelView, icon: String, label: String) -> some View {
-        ToolbarTab(icon: icon, label: label, labelEdge: .trailing, isActive: appState.currentView == view) {
+        RailTab(icon: icon, label: label, isActive: appState.currentView == view) {
             appState.currentView = view
         }
     }
 }
 
-/// One item in the top toolbar: an icon, highlighted when it is the current view. Its name
-/// appears in a small label underneath after a short hover. (A system tooltip is unreliable
-/// here: the panel never activates the app, and macOS shows tooltips only for active apps.)
-struct ToolbarTab: View {
+/// One item in the left rail. At rest just the icon; on hover it slides out into a pill with
+/// its name to the right, drawn inside the panel over the content. (The rail reserves only the
+/// icon's width; the pill overflows to the right, and the rail sits above the content.)
+struct RailTab: View {
     let icon: String
     let label: String
-    /// Where the hover label appears: below (top bar) or to the right (left rail).
-    var labelEdge: Edge = .bottom
     let isActive: Bool
     let action: () -> Void
     @State private var hovering = false
-    @State private var showLabel = false
-    @State private var pendingLabel: DispatchWorkItem?
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let isDark = colorScheme == .dark
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.primary.opacity(isActive ? 0.95 : (hovering ? 0.8 : 0.5)))
-                .frame(width: 30, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.primary.opacity(isActive ? 0.12 : (hovering ? 0.06 : 0)))
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 16)
+                if hovering {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold))
+                        .fixedSize()
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+            }
+            .foregroundColor(Color.primary.opacity(isActive || hovering ? 0.95 : 0.5))
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(hovering ? (isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card)
+                                   : Color.primary.opacity(isActive ? 0.12 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(hovering ? (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder) : .clear, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(hovering ? (isDark ? 0.4 : 0.1) : 0), radius: 6, y: 2)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .fixedSize()
+        // Hover over the whole pill (label included), so moving onto the word doesn't close it.
         .onHover { inside in
-            hovering = inside
-            pendingLabel?.cancel()
-            if inside {
-                let work = DispatchWorkItem { withAnimation(.easeOut(duration: 0.12)) { showLabel = true } }
-                pendingLabel = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
-            } else {
-                showLabel = false
-            }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) { hovering = inside }
         }
-        .overlay(alignment: labelEdge == .bottom ? .bottom : .trailing) {
-            if showLabel {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.black.opacity(0.85)))
-                    .fixedSize()
-                    // In the rail: the label's left edge sits 8pt right of the icon.
-                    .alignmentGuide(.trailing) { d in labelEdge == .bottom ? d[.trailing] : -8 }
-                    .offset(y: labelEdge == .bottom ? 28 : 0)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-        }
+        .accessibilityLabel(label)
+        .frame(width: 30, alignment: .leading)
     }
 }
 

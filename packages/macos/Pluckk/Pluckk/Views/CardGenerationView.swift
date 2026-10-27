@@ -553,12 +553,15 @@ struct CardGenerationView: View {
         collapsePanel()
     }
 
+    /// A pinned card stays open on its desktop, ready for the next capture. (Goes through
+    /// PluckkPanel.shared: under SwiftUI's app lifecycle NSApp.delegate is SwiftUI's wrapper,
+    /// not our AppDelegate, so casting it silently failed and nothing collapsed or cleared.)
     private func collapsePanel() {
-        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
-        if appDelegate.panel.isPinned {
+        guard let panel = PluckkPanel.shared else { appState.reset(); return }
+        if panel.isPinned {
             appState.reset()
         } else {
-            appDelegate.panel.collapse()
+            panel.collapse()
         }
     }
 }
