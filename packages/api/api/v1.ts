@@ -2,7 +2,7 @@
 //
 //   POST   auth/google            { credential, client }  → { token, user }
 //   DELETE auth/token                                      → revoke caller's token
-//   GET    cards[?source_url_prefix=&source=&folder_id=<uuid>|unfiled&limit=&offset=] → cards with folder + due_at
+//   GET    cards[?source_url_prefix=&source=&folder_id=<uuid>|unfiled&tag=&limit=&offset=] → cards with folder + due_at
 //   POST   cards                                           → create
 //   PATCH  cards/:id  · DELETE cards/:id
 //   GET    folders · POST folders · PATCH folders/:id · DELETE folders/:id
@@ -92,9 +92,10 @@ function publicUser(u: schema.User) {
 }
 
 // ---------------------------------------------------------------- cards
-/** `folderId` narrows to one deck ('unfiled' = no deck); `page` slices the newest-first list. */
+/** `folderId` narrows to one deck ('unfiled' = no deck), `tag` to cards carrying that tag;
+ *  `page` slices the newest-first list. */
 async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentifier?: string,
-                         folderId?: string, page?: { limit: number; offset: number }) {
+                         folderId?: string, page?: { limit: number; offset: number }, tag?: string) {
   const db = getDb();
   const conds = [eq(schema.cards.userId, userId), eq(schema.cards.isDeleted, false)];
   if (sourceUrlPrefix) conds.push(like(schema.cards.sourceUrl, sourceUrlPrefix.replace(/[%_]/g, '\\$&') + '%'));
@@ -102,6 +103,7 @@ async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentif
   if (sourceIdentifier) conds.push(sql`${schema.cards.provenance}->>'identifier' = ${sourceIdentifier}`);
   if (folderId === 'unfiled') conds.push(isNull(schema.cards.folderId));
   else if (folderId) conds.push(eq(schema.cards.folderId, folderId));
+  if (tag) conds.push(sql`${tag} = any(${schema.cards.tags})`);
   // A card has one schedule per component; its "due" is the earliest of them.
   const due = db.select({
     cardId: schema.cardReviewState.cardId,
@@ -122,7 +124,7 @@ async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentif
 router.on('GET', 'cards', authed(async (req, res, user) => {
   const prefix = typeof req.query.source_url_prefix === 'string' ? req.query.source_url_prefix : undefined;
   const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-  // Optional: one deck (?folder_id=<uuid>|unfiled) and a page (?limit=&offset=, limit ≤ 500).
+  // Optional: one deck (?folder_id=<uuid>|unfiled), one tag (?tag=), a page (?limit=&offset=, limit ≤ 500).
   const folder = typeof req.query.folder_id === 'string' ? req.query.folder_id : undefined;
   if (folder && folder !== 'unfiled' && !/^[0-9a-f-]{36}$/i.test(folder)) {
     res.status(400).json({ error: 'folder_id must be a uuid or "unfiled"' });
@@ -133,7 +135,8 @@ router.on('GET', 'cards', authed(async (req, res, user) => {
   const page = Number.isInteger(limit) && limit > 0
     ? { limit: Math.min(limit, 500), offset: Number.isInteger(offset) && offset > 0 ? offset : 0 }
     : undefined;
-  res.status(200).json(await listCards(user.id, prefix, source, folder, page));
+  const tag = typeof req.query.tag === 'string' && req.query.tag ? req.query.tag : undefined;
+  res.status(200).json(await listCards(user.id, prefix, source, folder, page, tag));
 }));
 
 // Creates through the diary (card.ingest). Accepts the new {spec, provenance} form and the
