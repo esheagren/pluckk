@@ -36,7 +36,6 @@ final class PracticeSession: ObservableObject {
 
     var current: ReviewItem? { index < queue.count ? queue[index] : nil }
     var canUndo: Bool { last != nil && !busy }
-    var remaining: Int { max(0, queue.count - index) }
 
     private init() {}
 
@@ -262,6 +261,7 @@ struct PracticeView: View {
             }
             }
         }
+        .overlay(alignment: .top) { SprintBar() }
         .overlay { if let zoomed { lightbox(zoomed) } }
         .onAppear { session.startIfNeeded() }
         .onChange(of: session.current?.id) { _ in
@@ -354,10 +354,6 @@ struct PracticeView: View {
                 .keyboardShortcut("z", modifiers: [])
                 .help("Undo (Z)")
             }
-
-            Text("\(session.remaining) left")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .foregroundColor(mutedText)
         }
         .padding(.horizontal, 22)
     }
@@ -607,6 +603,28 @@ struct PracticeView: View {
         if n <= 140 { return 19 }
         if n <= 320 { return 16 }
         return 14
+    }
+}
+
+/// Practice shows time, never how many cards are left: while a sprint runs, a thin bar along
+/// the top fills with the minutes used. No sprint, no bar; the point is to start, not to finish.
+struct SprintBar: View {
+    @ObservedObject private var timer = SessionTimer.shared
+
+    var body: some View {
+        if timer.isRunning {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.primary.opacity(0.06))
+                    Rectangle()
+                        .fill(PluckkTheme.accent.opacity(0.85))
+                        .frame(width: geo.size.width * timer.progress)
+                        .animation(.linear(duration: 1), value: timer.progress)
+                }
+            }
+            .frame(height: 3)
+            .transition(.opacity)
+        }
     }
 }
 
