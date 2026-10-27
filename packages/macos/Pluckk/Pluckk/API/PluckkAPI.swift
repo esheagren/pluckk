@@ -270,6 +270,18 @@ class PluckkAPI {
         return try JSONDecoder().decode([LibraryCard].self, from: data)
     }
 
+    /// Every card carrying a tag (newest first), across all decks.
+    func cards(token: String, tag: String, limit: Int, offset: Int) async throws -> [LibraryCard] {
+        let t = tag.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? tag
+        let data = try await send(token: token, method: "GET", path: "/api/v1/cards?tag=\(t)&limit=\(limit)&offset=\(offset)")
+        return try JSONDecoder().decode([LibraryCard].self, from: data)
+    }
+
+    /// Replace a card's tags.
+    func setTags(token: String, cardId: String, tags: [String]) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: ["tags": tags])
+    }
+
     /// Move a card to another deck (nil = unfiled).
     func moveCard(token: String, cardId: String, folderId: String?) async throws {
         _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)",
@@ -367,6 +379,9 @@ struct LibraryCard: Decodable, Identifiable {
     let image_url: String?
     let due_at: String?
     var folder_id: String?
+    var tags: [String]?
+
+    var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
 
     /// Two-way and list cards have several components; the API edits those only by full spec.
     var isSimple: Bool { style != "qa_bidirectional" && style != "cloze_list" }
@@ -378,6 +393,7 @@ struct ReviewItem: Decodable, Identifiable {
     let component_id: String
     var question: String
     var answer: String
+    var tags: [String]?
     let component_count: Int
     let image_url: String?
     let source_url: String?
@@ -393,6 +409,19 @@ struct ReviewItem: Decodable, Identifiable {
     /// picture before the answer. Everywhere else the image is a screenshot or illustration of
     /// the answer, so it waits for the reveal.
     var imageIsQuestion: Bool { image_url?.contains("/anki-media/") == true }
+
+    var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
+}
+
+/// "Mark for rework": a plain card tag, so it travels with the card and is undoable like any
+/// other edit. The Decks view lists every card carrying it.
+enum Rework {
+    static let tag = "rework"
+
+    static func toggled(_ tags: [String]?) -> [String] {
+        let t = tags ?? []
+        return t.contains(tag) ? t.filter { $0 != tag } : t + [tag]
+    }
 }
 
 struct IntervalPreviews: Decodable {

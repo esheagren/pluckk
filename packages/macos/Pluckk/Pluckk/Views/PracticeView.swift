@@ -45,17 +45,23 @@ final class PracticeSession: ObservableObject {
     /// A timed sprint begins: make sure there are cards to work through.
     func beginSprint() {
         timesUp = false
+        celebrateAfterThisCard = false
         switch phase {
         case .idle, .done, .failed: start()
         default: break
         }
     }
 
+    /// Time ran out. On a question, celebrate now. With the answer showing (or mid-edit), let the
+    /// card finish: "Good job" comes once it's rated (or deleted).
     func timeUp() {
-        editing = false
-        revealed = false
-        timesUp = true
+        if revealed || editing {
+            celebrateAfterThisCard = true
+        } else {
+            timesUp = true
+        }
     }
+    private var celebrateAfterThisCard = false
 
     /// The "Good job" moment is over: back to the next card, unrevealed. Nothing asks you to go
     /// on; revealing it simply starts another sprint.
@@ -200,6 +206,23 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    /// Flag (or unflag) the current card for later reworking; it stays in the session.
+    func toggleRework() {
+        guard let item = current, !busy, let token = AuthManager.shared.accessToken else { return }
+        let tags = Rework.toggled(item.tags)
+        busy = true
+        notice = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await PluckkAPI.shared.setTags(token: token, cardId: item.card_id, tags: tags)
+                for i in queue.indices where queue[i].card_id == item.card_id { queue[i].tags = tags }
+            } catch {
+                notice = "Couldn't mark the card: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func deleteCurrent() {
         guard let item = current, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
         busy = true
@@ -224,6 +247,10 @@ final class PracticeSession: ObservableObject {
         revealed = false
         shownAt = Date()
         if index >= queue.count { phase = .done }
+        if celebrateAfterThisCard {
+            celebrateAfterThisCard = false
+            timesUp = true
+        }
     }
 }
 
@@ -376,7 +403,8 @@ struct PracticeView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 28)
+        .padding(.top, 50)      // clear of the flag / edit / delete icons
+        .padding(.bottom, 28)
         .frame(maxWidth: .infinity, minHeight: 160, maxHeight: imageShowing(item) ? .infinity : nil)
         .background(cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -452,6 +480,14 @@ struct PracticeView: View {
             .overlay(Capsule().stroke(rule, lineWidth: 1))
         } else {
             HStack(spacing: 2) {
+                let marked = session.current?.isMarkedForRework == true
+                CardIconButton(systemName: marked ? "flag.fill" : "flag",
+                               help: marked ? "Marked for rework (click to unmark)" : "Mark for rework",
+                               hoverTint: PluckkTheme.Dark.warning,
+                               tint: marked ? PluckkTheme.Dark.warning : nil) {
+                    session.toggleRework()
+                }
+                .disabled(session.busy)
                 CardIconButton(systemName: "pencil",
                                help: session.canEditCurrent ? "Edit card" : "Two-way and list cards are edited in the web app") {
                     editQuestion = session.current?.question ?? ""
@@ -702,6 +738,8 @@ struct CardIconButton: View {
     let systemName: String
     let help: String
     var hoverTint: Color? = nil
+    /// A colour at rest (e.g. a set flag); otherwise muted until hovered.
+    var tint: Color? = nil
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
@@ -710,7 +748,7 @@ struct CardIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(hovering && isEnabled ? (hoverTint ?? Color.primary.opacity(0.8)) : Color.primary.opacity(0.35))
+                .foregroundColor(hovering && isEnabled ? (hoverTint ?? Color.primary.opacity(0.8)) : (tint ?? Color.primary.opacity(0.35)))
                 .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.primary.opacity(hovering && isEnabled ? 0.08 : 0)))
                 .contentShape(Circle())

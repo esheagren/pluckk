@@ -1,18 +1,26 @@
 import SwiftUI
 
-/// The library at a glance: every deck with its counts; open one to see and curate its cards
-/// (search, edit, move to another deck, delete). Cards load a page at a time.
+/// What a card list shows: one deck, or every card marked for rework.
+enum CardListSource: Hashable {
+    case deck(DeckSummary)
+    case rework
+}
+
+/// The library at a glance: cards marked for rework, then every deck with its counts; open
+/// either to see and curate the cards (search, flag, edit, move, delete). Cards load a page at
+/// a time.
 struct DecksView: View {
     @State private var decks: [DeckSummary] = []
+    @State private var reworkCount: Int?
     @State private var loading = true
     @State private var error: String?
-    @State private var open: DeckSummary?
+    @State private var open: CardListSource?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Group {
             if let open {
-                DeckCardsView(deck: open, allDecks: decks) {
+                DeckCardsView(source: open, allDecks: decks) {
                     self.open = nil
                     load()
                 }
@@ -41,8 +49,10 @@ struct DecksView: View {
                     Text(error).font(.system(size: 13)).foregroundColor(.secondary)
                     Button("Try again") { load() }.buttonStyle(PillButtonStyle(prominent: false))
                 } else {
+                    ReworkRow(count: reworkCount ?? 0) { open = .rework }
+                        .padding(.bottom, 6)
                     ForEach(decks) { deck in
-                        DeckRow(deck: deck) { open = deck }
+                        DeckRow(deck: deck) { open = .deck(deck) }
                     }
                 }
             }
@@ -57,12 +67,50 @@ struct DecksView: View {
         error = nil
         Task {
             do {
-                decks = try await PluckkAPI.shared.reviewDecks(token: token)
+                async let d = PluckkAPI.shared.reviewDecks(token: token)
+                async let r = PluckkAPI.shared.cards(token: token, tag: Rework.tag, limit: 500, offset: 0)
+                decks = try await d
+                reworkCount = (try? await r)?.count
             } catch {
                 self.error = error.localizedDescription
             }
             loading = false
         }
+    }
+}
+
+/// "Marked for rework": the cards flagged from Practice (or here) for later fixing.
+private struct ReworkRow: View {
+    let count: Int
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "flag.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(PluckkTheme.Dark.warning)
+                Text("Marked for rework")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("\(count)")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundColor(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(hovering ? 1 : 0.5))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(PluckkTheme.Dark.warning.opacity(hovering ? 0.14 : 0.08))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -131,9 +179,23 @@ private struct DeckRow: View {
 // MARK: - One deck's cards
 
 private struct DeckCardsView: View {
-    let deck: DeckSummary
+    let source: CardListSource
     let allDecks: [DeckSummary]
     let onBack: () -> Void
+
+    private var title: String {
+        switch source {
+        case .deck(let d): return d.title
+        case .rework: return "Marked for rework"
+        }
+    }
+    /// Decks a card can move to (not the one it's being listed in).
+    private var moveTargets: [DeckSummary] {
+        switch source {
+        case .deck(let d): return allDecks.filter { $0.id != d.id }
+        case .rework: return allDecks
+        }
+    }
 
     private static let pageSize = 100
 
@@ -164,9 +226,11 @@ private struct DeckCardsView: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
 
-                Text(deck.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
-                Text("\(deck.total)").font(.system(size: 12).monospacedDigit()).foregroundColor(.secondary)
+                if case .deck(let d) = source {
+                    Text("\(d.total)").font(.system(size: 12).monospacedDigit()).foregroundColor(.secondary)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -187,8 +251,9 @@ private struct DeckCardsView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(shown) { card in
-                        LibraryCardRow(card: card, decks: allDecks, currentDeckId: deck.folder_id,
+                        LibraryCardRow(card: card, moveTargets: moveTargets,
                                        onSave: { q, a in save(card, q, a) },
+                                       onToggleRework: { toggleRework(card) },
                                        onMove: { move(card, to: $0) },
                                        onDelete: { delete(card) })
                     }
@@ -200,7 +265,7 @@ private struct DeckCardsView: View {
                         Text(error).font(.system(size: 12)).foregroundColor(.secondary)
                     }
                     if reachedEnd && cards.isEmpty {
-                        Text("No cards in this deck.").font(.system(size: 13)).foregroundColor(.secondary).padding(.top, 30)
+                        Text(source == .rework ? "Nothing marked for rework." : "No cards in this deck.").font(.system(size: 13)).foregroundColor(.secondary).padding(.top, 30)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -215,8 +280,15 @@ private struct DeckCardsView: View {
         loading = true
         Task {
             do {
-                let page = try await PluckkAPI.shared.cards(token: token, folderId: deck.folder_id,
+                let page: [LibraryCard]
+                switch source {
+                case .deck(let d):
+                    page = try await PluckkAPI.shared.cards(token: token, folderId: d.folder_id,
                                                             limit: Self.pageSize, offset: cards.count)
+                case .rework:
+                    page = try await PluckkAPI.shared.cards(token: token, tag: Rework.tag,
+                                                            limit: Self.pageSize, offset: cards.count)
+                }
                 cards += page
                 reachedEnd = page.count < Self.pageSize
             } catch {
@@ -243,13 +315,35 @@ private struct DeckCardsView: View {
         }
     }
 
+    private func toggleRework(_ card: LibraryCard) {
+        guard let token = AuthManager.shared.accessToken else { return }
+        notice = nil
+        let tags = Rework.toggled(card.tags)
+        Task {
+            do {
+                try await PluckkAPI.shared.setTags(token: token, cardId: card.id, tags: tags)
+                if source == .rework && !tags.contains(Rework.tag) {
+                    cards.removeAll { $0.id == card.id }   // unflagged: it leaves this list
+                } else if let i = cards.firstIndex(where: { $0.id == card.id }) {
+                    cards[i].tags = tags
+                }
+            } catch {
+                notice = "Couldn't update the flag: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func move(_ card: LibraryCard, to folderId: String?) {
         guard let token = AuthManager.shared.accessToken else { return }
         notice = nil
         Task {
             do {
                 try await PluckkAPI.shared.moveCard(token: token, cardId: card.id, folderId: folderId)
-                cards.removeAll { $0.id == card.id }
+                if case .deck = source {
+                    cards.removeAll { $0.id == card.id }
+                } else if let i = cards.firstIndex(where: { $0.id == card.id }) {
+                    cards[i].folder_id = folderId
+                }
             } catch {
                 notice = "Couldn't move: \(error.localizedDescription)"
             }
@@ -273,9 +367,9 @@ private struct DeckCardsView: View {
 /// One card in a deck: question and answer; on hover, edit / move / delete.
 private struct LibraryCardRow: View {
     let card: LibraryCard
-    let decks: [DeckSummary]
-    let currentDeckId: String?
+    let moveTargets: [DeckSummary]
     let onSave: (String, String) -> Void
+    let onToggleRework: () -> Void
     let onMove: (String?) -> Void
     let onDelete: () -> Void
 
@@ -318,6 +412,9 @@ private struct LibraryCardRow: View {
                             .lineLimit(2)
                     }
                     Spacer(minLength: 4)
+                    if card.isMarkedForRework && !(hovering || confirmingDelete) {
+                        Image(systemName: "flag.fill").font(.system(size: 10)).foregroundColor(PluckkTheme.Dark.warning)
+                    }
                     if card.image_url != nil {
                         Image(systemName: "photo").font(.system(size: 11)).foregroundColor(.secondary)
                     }
@@ -350,6 +447,11 @@ private struct LibraryCardRow: View {
             }
         } else {
             HStack(spacing: 0) {
+                CardIconButton(systemName: card.isMarkedForRework ? "flag.fill" : "flag",
+                               help: card.isMarkedForRework ? "Unmark" : "Mark for rework",
+                               hoverTint: PluckkTheme.Dark.warning,
+                               tint: card.isMarkedForRework ? PluckkTheme.Dark.warning : nil,
+                               action: onToggleRework)
                 CardIconButton(systemName: "pencil",
                                help: card.isSimple ? "Edit" : "Two-way and list cards are edited in the web app") {
                     q = card.question
@@ -358,7 +460,7 @@ private struct LibraryCardRow: View {
                 }
                 .disabled(!card.isSimple)
                 Menu {
-                    ForEach(decks.filter { $0.folder_id != currentDeckId }) { deck in
+                    ForEach(moveTargets) { deck in
                         Button(deck.title) { onMove(deck.folder_id) }
                     }
                 } label: {
