@@ -247,37 +247,50 @@ struct CardGenerationView: View {
                 regenerateNote
             }
 
-            HStack(spacing: 10) {
-                if !showFocusInput {
+            // Regenerate left, Store right, Clear dead centre (whatever the sides' widths).
+            ZStack {
+                HStack(spacing: 10) {
+                    if !showFocusInput {
+                        Button(action: {
+                            showFocusInput = true
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Regenerate")
+                            }
+                        }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .keyboardShortcut("r", modifiers: [])
+                    }
+
+                    Spacer()
+
+                    // Store button with expanded card count
                     Button(action: {
-                        showFocusInput = true
+                        sendCards()
                     }) {
                         HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
+                            Image(systemName: "tray.and.arrow.down.fill")
                                 .font(.system(size: 12, weight: .semibold))
-                            Text("Regenerate")
+                            Text(totalExpandedCardCount > 0 ? "Store \(totalExpandedCardCount)" : "Store")
                         }
                     }
-                    .buttonStyle(PillButtonStyle(prominent: false))
-                    .keyboardShortcut("r", modifiers: [])
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .disabled(appState.selectedCardIndices.isEmpty)
+                    // Return belongs to the note while it is open
+                    .keyboardShortcut(showFocusInput ? nil : KeyboardShortcut(.return, modifiers: []))
                 }
 
-                Spacer()
-
-                // Store button with expanded card count
-                Button(action: {
-                    sendCards()
-                }) {
+                Button(action: clearCards) {
                     HStack(spacing: 6) {
-                        Image(systemName: "tray.and.arrow.down.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(totalExpandedCardCount > 0 ? "Store \(totalExpandedCardCount)" : "Store")
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Clear")
                     }
                 }
-                .buttonStyle(PillButtonStyle(prominent: true))
-                .disabled(appState.selectedCardIndices.isEmpty)
-                // Return belongs to the note while it is open
-                .keyboardShortcut(showFocusInput ? nil : KeyboardShortcut(.return, modifiers: []))
+                .buttonStyle(PillButtonStyle(prominent: false))
+                .help("Discard these cards and close")
             }
         }
     }
@@ -532,6 +545,14 @@ struct CardGenerationView: View {
     }
 
     /// A pinned card stays open on its desktop, ready for the next capture.
+    /// Discard the batch without storing anything, then close (or, pinned, just empty the card).
+    private func clearCards() {
+        showFocusInput = false
+        focusText = ""
+        editingCardIndex = nil
+        collapsePanel()
+    }
+
     private func collapsePanel() {
         guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
         if appDelegate.panel.isPinned {
