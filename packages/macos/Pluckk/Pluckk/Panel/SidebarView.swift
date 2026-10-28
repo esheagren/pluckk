@@ -150,15 +150,21 @@ struct GripBar: View {
     }
 }
 
-/// The thin icon rail on the left: Practice (the default), Create (AI), New card (by hand), Decks;
+/// The thin icon rail on the left: Mixed practice (the default; leaves any single-deck focus), Create (AI), New card (by hand), Decks;
 /// Settings at the foot.
 /// Hovering an icon slides its name out to the right (RailTab).
 struct NavRail: View {
     @ObservedObject private var appState = AppState.shared
+    @ObservedObject private var practice = PracticeSession.shared
 
     var body: some View {
         VStack(spacing: 6) {
-            tab(.practice, icon: "rectangle.stack", label: "Practice")
+            // Always the mix of every deck: leaves a single-deck focus (started from Decks).
+            RailTab(icon: "rectangle.stack", label: "Mixed practice",
+                    isActive: appState.currentView == .practice && practice.focusDeck == nil) {
+                if practice.focusDeck != nil { practice.leaveDeck() }
+                appState.currentView = .practice
+            }
             tab(.generate, icon: "sparkles", label: "Create")
             tab(.newCard, icon: "plus", label: "New card")
             tab(.decks, icon: "square.grid.2x2", label: "Decks")
