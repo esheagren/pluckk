@@ -36,11 +36,27 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         generation += 1
     }
 
+    /// End the session (Claude Code and its shell) without starting another.
+    func end() {
+        view?.terminate()
+    }
+
     private func launch() {
         guard let view else { return }
-        var env = ProcessInfo.processInfo.environment
-        env["TERM"] = "xterm-256color"
-        env["COLORTERM"] = "truecolor"
+        installScrollMonitor()
+        // A clean environment: only the basics, and the login shell sets up the rest. Inheriting
+        // Pluckk's own environment leaked another session's CLAUDE_* settings (e.g. when Pluckk
+        // was launched from Claude Code), which made this one think it was a child session.
+        let inherited = ProcessInfo.processInfo.environment
+        var env: [String: String] = [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
+            "TERM_PROGRAM": "Pluckk",
+        ]
+        for key in ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK"] {
+            if let v = inherited[key] { env[key] = v }
+        }
         let environment = env.map { "\($0.key)=\($0.value)" }
         // Interactive login zsh so PATH and the `claude` function load; land in the repo, start
         // Claude Code, and drop to a normal shell when it exits.
@@ -50,6 +66,45 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
                           execName: "-zsh")
         // Not inside SwiftUI's view update that created the view.
         DispatchQueue.main.async { self.running = true }
+    }
+
+    // MARK: Scrolling
+
+    private var scrollMonitor: Any?
+    private var scrollRemainder: CGFloat = 0
+
+    /// Full-screen programs (Claude Code among them) draw on the terminal's alternate screen,
+    /// which has no scrollback; SwiftTerm 1.11 only scrolls its own history, so the wheel did
+    /// nothing. Over the terminal on the alternate screen, pass the wheel to the program as
+    /// mouse-wheel events when it asked for the mouse, otherwise as ↑/↓ keys (what Terminal.app
+    /// does). On the normal screen, SwiftTerm scrolls its history as before.
+    private func installScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let view = self.view, event.window === view.window,
+                  view.bounds.contains(view.convert(event.locationInWindow, from: nil)) else { return event }
+            let terminal = view.getTerminal()
+            guard terminal.isCurrentBufferAlternate else { return event }
+
+            self.scrollRemainder += event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 12 : event.scrollingDeltaY
+            let lines = Int(self.scrollRemainder)
+            guard lines != 0 else { return nil }
+            self.scrollRemainder -= CGFloat(lines)
+
+            if terminal.mouseMode != .off {
+                let button = lines > 0 ? 4 : 5          // wheel up / down
+                let flags = terminal.encodeButton(button: button, release: false, shift: false, meta: false, control: false)
+                let point = view.convert(event.locationInWindow, from: nil)
+                let col = max(0, Int(point.x / max(1, view.bounds.width) * CGFloat(terminal.cols)))
+                let row = max(0, Int((view.bounds.height - point.y) / max(1, view.bounds.height) * CGFloat(terminal.rows)))
+                for _ in 0..<abs(lines) { terminal.sendEvent(buttonFlags: flags, x: col, y: row) }
+            } else {
+                let up: [UInt8] = terminal.applicationCursor ? [0x1b, 0x4f, 0x41] : [0x1b, 0x5b, 0x41]
+                let down: [UInt8] = terminal.applicationCursor ? [0x1b, 0x4f, 0x42] : [0x1b, 0x5b, 0x42]
+                for _ in 0..<abs(lines) { view.send(lines > 0 ? up : down) }
+            }
+            return nil
+        }
     }
 
     // MARK: LocalProcessTerminalViewDelegate
@@ -67,7 +122,26 @@ struct TerminalPanelView: View {
     @ObservedObject private var session = TerminalSession.shared
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal").font(.system(size: 10, weight: .semibold))
+                Text("Claude Code · pluckFull").font(.system(size: 11, weight: .medium))
+                Spacer()
+                if session.running {
+                    Button("Restart") { session.restart() }
+                        .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.secondary)
+                        .help("End this session and start a new one")
+                    Button("End session") { session.end() }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundColor(Color(hex: "e5534b"))
+                        .help("Quit Claude Code and the shell (other tabs: use the icons on the left)")
+                }
+            }
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
+
+            ZStack(alignment: .bottom) {
             TerminalHost(generation: session.generation)
                 .padding(.leading, 6)
                 .padding(.top, 4)
@@ -80,6 +154,7 @@ struct TerminalPanelView: View {
                 .padding(12)
                 .background(Capsule().fill(Color.black.opacity(0.7)))
                 .padding(.bottom, 16)
+            }
             }
         }
     }
