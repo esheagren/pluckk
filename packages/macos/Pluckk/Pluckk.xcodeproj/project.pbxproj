@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		025 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127 /* TerminalPanelView.swift */; };
+		700B /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 700A /* SwiftTerm */; };
 		024 /* NewCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126 /* NewCardView.swift */; };
 		023 /* ActivityGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125 /* ActivityGrid.swift */; };
 		022 /* DecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124 /* DecksView.swift */; };
@@ -34,6 +36,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		127 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
 		126 /* NewCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewCardView.swift; sourceTree = "<group>"; };
 		125 /* ActivityGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityGrid.swift; sourceTree = "<group>"; };
 		124 /* DecksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecksView.swift; sourceTree = "<group>"; };
@@ -68,6 +71,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				700B /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,6 +165,7 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				127 /* TerminalPanelView.swift */,
 				126 /* NewCardView.swift */,
 				125 /* ActivityGrid.swift */,
 				124 /* DecksView.swift */,
@@ -195,6 +200,9 @@
 			dependencies = (
 			);
 			name = Pluckk;
+			packageProductDependencies = (
+				700A /* SwiftTerm */,
+			);
 			productName = Pluckk;
 			productReference = 100 /* Pluckk.app */;
 			productType = "com.apple.product-type.application";
@@ -218,6 +226,9 @@
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
+			packageReferences = (
+				7009 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			knownRegions = (
 				en,
 				Base,
@@ -262,6 +273,7 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				025 /* TerminalPanelView.swift in Sources */,
 				024 /* NewCardView.swift in Sources */,
 				023 /* ActivityGrid.swift in Sources */,
 				022 /* DecksView.swift in Sources */,
@@ -473,6 +485,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7009 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = exactVersion;
+				version = 1.11.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		700A /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7009 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 600 /* Project object */;
 }

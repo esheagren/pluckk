@@ -82,6 +82,8 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    case .terminal:
+                        TerminalPanelView()
                     case .settings:
                         SettingsView()
                     }
@@ -169,6 +171,7 @@ struct NavRail: View {
             tab(.newCard, icon: "plus", label: "New card")
             tab(.decks, icon: "square.grid.2x2", label: "Decks")
             Spacer()
+            tab(.terminal, icon: "terminal", label: "Terminal")
             tab(.settings, icon: "gearshape", label: "Settings")
         }
         .padding(.vertical, 12)

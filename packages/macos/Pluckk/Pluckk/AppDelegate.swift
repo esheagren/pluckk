@@ -48,14 +48,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// While the terminal is on screen, ⌘ gestures stay out of the way of typing (⌘⌘ capture and
+    /// hold-⌘-to-close are off).
+    private var terminalInFront: Bool { panel.isExpanded && appState.currentView == .terminal }
+
     private func setupDoubleCmdDetector() {
         doubleCmdDetector = DoubleCmdDetector()
         doubleCmdDetector.onDoubleTap = { [weak self] in
-            self?.handleDoubleTap()
+            guard let self, !self.terminalInFront else { return }
+            self.handleDoubleTap()
         }
         // Holding ⌘ on its own sends the card back down to the pill (no-op if already there).
         doubleCmdDetector.onLongHold = { [weak self] in
-            self?.panel.collapse()
+            guard let self, !self.terminalInFront else { return }
+            self.panel.collapse()
         }
         doubleCmdDetector.start()
     }

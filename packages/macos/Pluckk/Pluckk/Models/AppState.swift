@@ -24,6 +24,7 @@ enum PanelView {
     case practice
     case newCard
     case decks
+    case terminal
     case settings
 }
 
