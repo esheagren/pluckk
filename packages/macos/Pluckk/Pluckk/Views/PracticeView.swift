@@ -88,13 +88,31 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    /// The deck being practised on its own, or nil for the usual mix of all decks.
+    @Published private(set) var focusDeck: DeckSummary?
+
+    /// Practise one deck: a fresh session from just that deck, until you leave it.
+    func practice(deck: DeckSummary) {
+        focusDeck = deck
+        timesUp = false
+        start()
+    }
+
+    /// Back to the normal mix of every deck.
+    func leaveDeck() {
+        focusDeck = nil
+        timesUp = false
+        start()
+    }
+
     func start() {
         guard let token = AuthManager.shared.accessToken else { return }
         phase = .loading
         notice = nil
+        let focus: String?? = focusDeck.map { $0.folder_id }
         Task {
             do {
-                let items = try await PluckkAPI.shared.reviewSession(token: token)
+                let items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus)
                 queue = items
                 index = 0
                 reviewedCount = 0
@@ -378,7 +396,9 @@ struct PracticeView: View {
 
     private func header(_ item: ReviewItem) -> some View {
         HStack(spacing: 8) {
-            if let deck = item.folder?.name {
+            if let focus = session.focusDeck {
+                FocusDeckChip(title: focus.title) { session.leaveDeck() }
+            } else if let deck = item.folder?.name {
                 Text(deck.uppercased())
                     .font(.system(size: 10, weight: .semibold)).tracking(0.6)
                     .foregroundColor(PluckkTheme.accent)
@@ -612,7 +632,10 @@ struct PracticeView: View {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 30, weight: .light))
                     .foregroundColor(PluckkTheme.accent)
-                Text(session.reviewedCount > 0 ? "Session done" : "Nothing due right now")
+                if let focus = session.focusDeck {
+                    FocusDeckChip(title: focus.title) { session.leaveDeck() }
+                }
+                Text(session.reviewedCount > 0 ? "Session done" : (session.focusDeck != nil ? "Nothing due in this deck" : "Nothing due right now"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(primaryText)
                 if session.reviewedCount > 0 {
@@ -770,6 +793,34 @@ struct CopyCardIDButton: View {
             copied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
         }
+    }
+}
+
+/// "Practising <deck> ✕": shown while one deck is being practised; ✕ returns to the mix.
+struct FocusDeckChip: View {
+    let title: String
+    let onLeave: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("PRACTISING")
+                .font(.system(size: 9, weight: .semibold)).tracking(0.6)
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(PluckkTheme.accent)
+                .lineLimit(1)
+            Button(action: onLeave) {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color.primary.opacity(hovering ? 0.8 : 0.45))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Back to all decks")
+        }
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(Capsule().fill(PluckkTheme.accent.opacity(0.12)))
     }
 }
 

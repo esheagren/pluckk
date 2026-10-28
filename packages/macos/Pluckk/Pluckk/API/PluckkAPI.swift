@@ -233,10 +233,16 @@ class PluckkAPI {
     // The server builds the session, schedules each rating and computes the interval
     // previews; the client only shows items and sends ratings back.
 
-    /// A session using the user's Mix settings (deck shares, new-card caps, session size).
-    func reviewSession(token: String) async throws -> [ReviewItem] {
+    /// A session using the user's Mix settings (deck shares, new-card caps, session size), or,
+    /// with `focus`, one deck only (its due cards, then new ones up to the deck's daily cap;
+    /// paused decks can be focused). `focus` carries the folder id, nil inside = unfiled.
+    func reviewSession(token: String, focus: String?? = nil) async throws -> [ReviewItem] {
         struct Response: Decodable { let items: [ReviewItem] }
-        let data = try await send(token: token, method: "POST", path: "/api/v1/review/session", json: ["mode": "scheduled"])
+        var body: [String: Any] = ["mode": "scheduled"]
+        if let focus {
+            body = ["mode": "focus", "folder_id": focus.map { $0 as Any } ?? NSNull()]
+        }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/session", json: body)
         return try JSONDecoder().decode(Response.self, from: data).items
     }
 

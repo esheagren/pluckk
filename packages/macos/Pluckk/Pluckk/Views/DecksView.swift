@@ -52,7 +52,7 @@ struct DecksView: View {
                     ReworkRow(count: reworkCount ?? 0) { open = .rework }
                         .padding(.bottom, 6)
                     ForEach(decks) { deck in
-                        DeckRow(deck: deck) { open = .deck(deck) }
+                        DeckRow(deck: deck, onPractise: { practise(deck) }) { open = .deck(deck) }
                     }
                 }
             }
@@ -116,6 +116,7 @@ private struct ReworkRow: View {
 
 private struct DeckRow: View {
     let deck: DeckSummary
+    let onPractise: () -> Void
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.colorScheme) private var colorScheme
@@ -143,6 +144,16 @@ private struct DeckRow: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
+                if hovering {
+                    Button(action: onPractise) {
+                        Image(systemName: "play.fill").font(.system(size: 10))
+                            .foregroundColor(PluckkTheme.accent)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(PluckkTheme.accent.opacity(0.14)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Practise just this deck")
+                }
                 if deck.due > 0 { countPill("\(deck.due) due", PluckkTheme.accent) }
                 if deck.new > 0 { countPill("\(deck.new) new", PluckkTheme.bidirectionalAccent) }
                 Image(systemName: "chevron.right")
@@ -230,6 +241,14 @@ private struct DeckCardsView: View {
                 Spacer()
                 if case .deck(let d) = source {
                     Text("\(d.total)").font(.system(size: 12).monospacedDigit()).foregroundColor(.secondary)
+                    Button(action: { practise(d) }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill").font(.system(size: 9))
+                            Text("Practice")
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .help("Practise just this deck")
                 }
             }
             .padding(.horizontal, 20)
@@ -478,4 +497,11 @@ private struct LibraryCardRow: View {
             }
         }
     }
+}
+
+/// Practise one deck: switch to Practice with a session from just that deck.
+@MainActor
+private func practise(_ deck: DeckSummary) {
+    PracticeSession.shared.practice(deck: deck)
+    AppState.shared.currentView = .practice
 }
