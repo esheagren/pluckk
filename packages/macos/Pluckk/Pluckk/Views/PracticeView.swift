@@ -31,10 +31,17 @@ final class PracticeSession: ObservableObject {
     }
 
     private var shownAt = Date()
-    private var last: LastAction?
+    /// Undo goes back through the session's recent actions, newest first.
+    private var history: [LastAction] = []
+    private let historyLimit = 20
 
     var current: ReviewItem? { index < queue.count ? queue[index] : nil }
-    var canUndo: Bool { last != nil && !busy }
+    var canUndo: Bool { !history.isEmpty && !busy }
+
+    private func remember(_ action: LastAction) {
+        history.append(action)
+        if history.count > historyLimit { history.removeFirst() }
+    }
 
     private init() {}
 
@@ -93,7 +100,7 @@ final class PracticeSession: ObservableObject {
                 reviewedCount = 0
                 revealed = false
                 editing = false
-                last = nil
+                history = []
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
             } catch {
@@ -119,7 +126,7 @@ final class PracticeSession: ObservableObject {
             defer { busy = false }
             do {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed)
-                last = .rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again)
+                remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
                 reviewedCount += 1
                 if rating == .again {
                     var requeued = item
@@ -137,8 +144,10 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    /// Go back one action (← or Z). An undone rating returns with its answer showing, so it can
+    /// be re-rated straight away; an undone delete returns the card to the queue.
     func undo() {
-        guard let last, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
+        guard let last = history.last, !busy, !editing, let token = AuthManager.shared.accessToken else { return }
         busy = true
         notice = nil
         Task {
@@ -147,22 +156,26 @@ final class PracticeSession: ObservableObject {
                 switch last {
                 case let .rating(eventId, item, at, wasAgain):
                     let restored = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) ?? item
-                    // An "again" moved the item to the end; undo is only offered for the latest
-                    // action, so that copy is still the last one.
-                    if wasAgain, !queue.isEmpty { queue.removeLast() }
+                    // An "again" re-queued a copy further on; drop that copy before putting the
+                    // card back where it was.
+                    if wasAgain, let copy = queue.indices.last(where: { $0 >= at && queue[$0].id == item.id }) {
+                        queue.remove(at: copy)
+                    }
                     let i = min(at, queue.count)
                     queue.insert(restored, at: i)
                     index = i
                     reviewedCount = max(0, reviewedCount - 1)
+                    revealed = true
                 case let .deletion(eventId, at, removed):
                     _ = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId)
                     let i = min(at, queue.count)
                     queue.insert(contentsOf: removed, at: i)
                     index = i
+                    revealed = false
                 }
-                self.last = nil
+                history.removeLast()
+                timesUp = false
                 phase = .reviewing
-                revealed = false
                 shownAt = Date()
             } catch {
                 notice = "Couldn't undo: \(error.localizedDescription)"
@@ -234,7 +247,7 @@ final class PracticeSession: ObservableObject {
                 // Drop every component of this card still ahead in the queue.
                 let removed = queue[index...].filter { $0.card_id == item.card_id }
                 queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != item.card_id }
-                last = eventId.map { .deletion(eventId: $0, index: index, removed: removed) }
+                if let eventId { remember(.deletion(eventId: eventId, index: index, removed: removed)) }
                 advance()
             } catch {
                 notice = "Couldn't delete the card: \(error.localizedDescription)"
@@ -388,7 +401,13 @@ struct PracticeView: View {
                 .opacity(session.canUndo ? 1 : 0)
                 .disabled(!session.canUndo)
                 .keyboardShortcut("z", modifiers: [])
-                .help("Undo (Z)")
+                .help("Back (← or Z)")
+                // ← also goes back (a second, invisible button carries the second shortcut).
+                Button("") { session.undo() }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
+                    .disabled(!session.canUndo)
+                    .frame(width: 0, height: 0)
+                    .opacity(0)
             }
         }
         .padding(.horizontal, 22)
