@@ -447,6 +447,7 @@ private struct LibraryCardRow: View {
             }
         } else {
             HStack(spacing: 0) {
+                CopyCardIDButton(cardId: card.id)
                 CardIconButton(systemName: card.isMarkedForRework ? "flag.fill" : "flag",
                                help: card.isMarkedForRework ? "Unmark" : "Mark for rework",
                                hoverTint: PluckkTheme.Dark.warning,

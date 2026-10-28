@@ -480,6 +480,7 @@ struct PracticeView: View {
             .overlay(Capsule().stroke(rule, lineWidth: 1))
         } else {
             HStack(spacing: 2) {
+                if let id = session.current?.card_id { CopyCardIDButton(cardId: id) }
                 let marked = session.current?.isMarkedForRework == true
                 CardIconButton(systemName: marked ? "flag.fill" : "flag",
                                help: marked ? "Marked for rework (click to unmark)" : "Mark for rework",
@@ -730,6 +731,26 @@ struct KeyCap: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).stroke(Color.primary.opacity(0.18), lineWidth: 1))
+    }
+}
+
+/// Copies a reference to the card ("pluckk card <uuid>") so it can be pasted into a chat with
+/// an agent, which looks it up with the pluckk-cards skill (`pluckk.py card <id>`). The icon
+/// turns into a check for a moment to confirm.
+struct CopyCardIDButton: View {
+    let cardId: String
+    @State private var copied = false
+
+    var body: some View {
+        CardIconButton(systemName: copied ? "checkmark" : "number",
+                       help: "Copy card ID",
+                       tint: copied ? PluckkTheme.Dark.success : nil) {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString("pluckk card \(cardId)", forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+        }
     }
 }
 
