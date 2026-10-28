@@ -44,6 +44,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     private func launch() {
         guard let view else { return }
         installScrollMonitor()
+        installKeyMonitor()
         // A clean environment: only the basics, and the login shell sets up the rest. Inheriting
         // Pluckk's own environment leaked another session's CLAUDE_* settings (e.g. when Pluckk
         // was launched from Claude Code), which made this one think it was a child session.
@@ -66,6 +67,44 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
                           execName: "-zsh")
         // Not inside SwiftUI's view update that created the view.
         DispatchQueue.main.async { self.running = true }
+    }
+
+    // MARK: Keys
+
+    private var keyMonitor: Any?
+
+    /// Keys Claude Code relies on that don't reach it inside Pluckk otherwise:
+    /// - Esc (closes /context, /help, pickers; interrupts a reply);
+    /// - ⌘C / ⌘V / ⌘A: Pluckk is a menu-bar app with no Edit menu, which is how those normally
+    ///   reach the focused view;
+    /// - Shift+Enter: a new line in the prompt (sent as Meta+Enter, which Claude Code accepts).
+    /// Only while the terminal has keyboard focus.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let view = self.view, let window = view.window,
+                  event.window === window, window.firstResponder === view else { return event }
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            switch (event.keyCode, mods) {
+            case (53, []):                                   // Esc
+                view.send([0x1b])
+                return nil
+            case (36, .shift), (76, .shift):                 // Shift+Return / Shift+Enter
+                view.send([0x1b, 0x0d])
+                return nil
+            case (_, .command) where event.charactersIgnoringModifiers == "v":
+                view.paste(self)
+                return nil
+            case (_, .command) where event.charactersIgnoringModifiers == "c":
+                view.copy(self)
+                return nil
+            case (_, .command) where event.charactersIgnoringModifiers == "a":
+                view.selectAll(self)
+                return nil
+            default:
+                return event
+            }
+        }
     }
 
     // MARK: Scrolling
