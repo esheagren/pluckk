@@ -13,11 +13,12 @@ function fitText(text: string): string {
 }
 
 /**
- * Only imported image-question decks (the art deck, stored under anki-media/) show the picture
- * on the question side; elsewhere the image is a screenshot or illustration of the answer.
+ * Only imported image-question decks (the art deck, stored under anki-media/) and cards tagged
+ * image-on-question (set when a card is written by hand in the Mac app) show the picture on the
+ * question side; elsewhere the image is a screenshot or illustration of the answer.
  */
-function imageIsQuestion(url: string | null | undefined): url is string {
-  return !!url && url.includes('/anki-media/');
+function imageIsQuestion(url: string | null | undefined, tags: string[] | null | undefined): url is string {
+  return !!url && (url.includes('/anki-media/') || !!tags?.includes('image-on-question'));
 }
 
 export default function ReviewCard({
@@ -189,7 +190,7 @@ export default function ReviewCard({
             </div>
             {/* Image on the front only for imported image-question decks (e.g. art), where
                 the picture IS the question; otherwise it would give the answer away. */}
-            {imageIsQuestion(card.image_url) && (
+            {imageIsQuestion(card.image_url, card.tags) && (
               <img
                 src={card.image_url}
                 alt=""

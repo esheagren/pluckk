@@ -47,6 +47,8 @@ export interface Card {
   spec?: import('@pluckk/core/entities').CardSpec | null;
   provenance?: import('@pluckk/core/entities').Provenance | null;
   component_count?: number;
+  /** Free-form tags (e.g. 'rework', 'image-on-question', 'src:…'); the API returns them on every card */
+  tags?: string[] | null;
   /** Due date from card_review_state (optional, loaded separately) */
   due_at?: string | null;
 }

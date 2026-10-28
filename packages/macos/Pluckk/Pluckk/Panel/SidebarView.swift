@@ -70,6 +70,12 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    case .newCard:
+                        if appState.isAuthenticated {
+                            NewCardView()
+                        } else {
+                            LoginView()
+                        }
                     case .decks:
                         if appState.isAuthenticated {
                             DecksView()
@@ -144,7 +150,8 @@ struct GripBar: View {
     }
 }
 
-/// The thin icon rail on the left: Practice (the default), Create, Decks; Settings at the foot.
+/// The thin icon rail on the left: Practice (the default), Create (AI), New card (by hand), Decks;
+/// Settings at the foot.
 /// Hovering an icon slides its name out to the right (RailTab).
 struct NavRail: View {
     @ObservedObject private var appState = AppState.shared
@@ -153,6 +160,7 @@ struct NavRail: View {
         VStack(spacing: 6) {
             tab(.practice, icon: "rectangle.stack", label: "Practice")
             tab(.generate, icon: "sparkles", label: "Create")
+            tab(.newCard, icon: "plus", label: "New card")
             tab(.decks, icon: "square.grid.2x2", label: "Decks")
             Spacer()
             tab(.settings, icon: "gearshape", label: "Settings")

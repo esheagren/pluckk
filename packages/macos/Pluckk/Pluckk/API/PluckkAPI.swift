@@ -208,6 +208,27 @@ class PluckkAPI {
         return try JSONDecoder().decode(MochiResponse.self, from: data).cardId
     }
 
+    // MARK: - Manual cards
+
+    /// A card written by hand (no AI): a plain Q&A spec into a deck (nil = unfiled). Returns its id.
+    func createManualCard(token: String, question: String, answer: String, folderId: String?, tags: [String]) async throws -> String {
+        let body: [String: Any] = [
+            "spec": ["style": "qa", "question": question, "answer": answer],
+            "provenance": ["identifier": "app:pluckk/manual", "title": "Written by hand", "containerTitle": "Pluckk"],
+            "folder_id": folderId.map { $0 as Any } ?? NSNull(),
+            "tags": tags,
+        ]
+        let data = try await send(token: token, method: "POST", path: "/api/v1/cards", json: body)
+        return try JSONDecoder().decode(CardRow.self, from: data).id
+    }
+
+    /// Attach an image to a card (stored in Vercel Blob; replaces any existing image).
+    func uploadCardImage(token: String, cardId: String, imageData: Data, mimeType: String) async throws {
+        _ = try await send(token: token, method: "POST", path: "/api/v1/images", json: [
+            "card_id": cardId, "image_data": imageData.base64EncodedString(), "mime_type": mimeType,
+        ])
+    }
+
     // MARK: - Review (practice)
     // The server builds the session, schedules each rating and computes the interval
     // previews; the client only shows items and sends ratings back.
@@ -405,12 +426,20 @@ struct ReviewItem: Decodable, Identifiable {
 
     var id: String { "\(card_id):\(component_id)" }
 
-    /// Only imported image-question decks (the art deck, stored under anki-media/) show the
-    /// picture before the answer. Everywhere else the image is a screenshot or illustration of
-    /// the answer, so it waits for the reveal.
-    var imageIsQuestion: Bool { image_url?.contains("/anki-media/") == true }
+    /// Only imported image-question decks (the art deck, stored under anki-media/) and cards
+    /// tagged image-on-question show the picture before the answer. Everywhere else the image is
+    /// a screenshot or illustration of the answer, so it waits for the reveal.
+    var imageIsQuestion: Bool {
+        image_url?.contains("/anki-media/") == true || tags?.contains(ImageSide.questionTag) == true
+    }
 
     var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
+}
+
+/// A hand-made card can put its image on the question side; the tag records that choice
+/// (imported art cards are on the question side by where they're stored).
+enum ImageSide {
+    static let questionTag = "image-on-question"
 }
 
 /// "Mark for rework": a plain card tag, so it travels with the card and is undoable like any

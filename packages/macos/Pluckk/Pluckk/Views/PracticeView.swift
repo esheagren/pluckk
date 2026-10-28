@@ -425,7 +425,7 @@ struct PracticeView: View {
 
     private func cardContent(_ item: ReviewItem) -> some View {
         VStack(spacing: 16) {
-            Text(item.question)
+            Text(cardMarkdown(item.question))
                 .font(.system(size: fittedSize(item.question), weight: .semibold))
                 .foregroundColor(primaryText)
                 .multilineTextAlignment(.center)
@@ -438,7 +438,7 @@ struct PracticeView: View {
 
             if session.revealed {
                 Rectangle().fill(rule).frame(height: 1)
-                Text(item.answer)
+                Text(cardMarkdown(item.answer))
                     .font(.system(size: fittedSize(item.answer) - 1))
                     .foregroundColor(answerText)
                     .multilineTextAlignment(.center)

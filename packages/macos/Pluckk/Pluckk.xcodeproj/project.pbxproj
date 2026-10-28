@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		024 /* NewCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126 /* NewCardView.swift */; };
 		023 /* ActivityGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125 /* ActivityGrid.swift */; };
 		022 /* DecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124 /* DecksView.swift */; };
 		014 /* SessionTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114 /* SessionTimer.swift */; };
@@ -33,6 +34,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		126 /* NewCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewCardView.swift; sourceTree = "<group>"; };
 		125 /* ActivityGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityGrid.swift; sourceTree = "<group>"; };
 		124 /* DecksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecksView.swift; sourceTree = "<group>"; };
 		114 /* SessionTimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTimer.swift; sourceTree = "<group>"; };
@@ -159,6 +161,7 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				126 /* NewCardView.swift */,
 				125 /* ActivityGrid.swift */,
 				124 /* DecksView.swift */,
 				121 /* PluckkLogo.swift */,
@@ -259,6 +262,7 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				024 /* NewCardView.swift in Sources */,
 				023 /* ActivityGrid.swift in Sources */,
 				022 /* DecksView.swift in Sources */,
 				014 /* SessionTimer.swift in Sources */,
