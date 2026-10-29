@@ -127,6 +127,44 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    // MARK: Keys
+
+    private var keyMonitor: Any?
+
+    /// Practice's keys (Space reveal, 1–4 rate, ← / Z back) handled before the rest of the app,
+    /// so they still work after text on the card has been selected: a selectable text view
+    /// takes keyboard focus and would otherwise swallow them. Skipped while typing in an editor,
+    /// during the "Good job" moment, and when Practice isn't on screen. Acting clears the
+    /// selection.
+    func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, AppState.shared.currentView == .practice,
+                  let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel,
+                  !self.editing, !self.timesUp, case .reviewing = self.phase else { return event }
+            if let tv = panel.firstResponder as? NSTextView, tv.isEditable { return event }
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard mods.isEmpty else { return event }
+
+            var handled = true
+            switch event.keyCode {
+            case 49:                                    // Space
+                if self.revealed { handled = false } else { self.reveal() }
+            case 18, 19, 20, 21:                        // 1–4
+                guard self.revealed else { handled = false; break }
+                let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy][event.keyCode]!
+                self.rate(rating)
+            case 123, 6:                                // ← or Z
+                self.undo()
+            default:
+                handled = false
+            }
+            guard handled else { return event }
+            panel.makeFirstResponder(nil)               // drop any text selection
+            return nil
+        }
+    }
+
     func reveal() {
         guard current != nil, !revealed else { return }
         withAnimation(.easeOut(duration: 0.15)) { revealed = true }
@@ -330,7 +368,10 @@ struct PracticeView: View {
         }
         .overlay(alignment: .top) { SprintBar() }
         .overlay { if let zoomed { lightbox(zoomed) } }
-        .onAppear { session.startIfNeeded() }
+        .onAppear {
+            session.installKeyMonitor()
+            session.startIfNeeded()
+        }
         .onChange(of: session.current?.id) { _ in
             zoomed = nil
             confirmingDelete = false
@@ -453,7 +494,11 @@ struct PracticeView: View {
         }
         .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
         .contentShape(Rectangle())
-        .onTapGesture { if !session.editing { session.reveal() } }
+        .onTapGesture {
+            guard !session.editing else { return }
+            PluckkPanel.shared?.makeFirstResponder(nil)   // a click on the card clears a selection
+            session.reveal()
+        }
         .id(item.id)
     }
 
