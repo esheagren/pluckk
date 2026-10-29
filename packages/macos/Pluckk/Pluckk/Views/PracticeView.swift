@@ -465,6 +465,7 @@ struct PracticeView: View {
     private func cardContent(_ item: ReviewItem) -> some View {
         VStack(spacing: 16) {
             Text(cardMarkdown(item.question))
+                .textSelection(.enabled)
                 .font(.system(size: fittedSize(item.question), weight: .semibold))
                 .foregroundColor(primaryText)
                 .multilineTextAlignment(.center)
@@ -478,6 +479,7 @@ struct PracticeView: View {
             if session.revealed {
                 Rectangle().fill(rule).frame(height: 1)
                 Text(cardMarkdown(item.answer))
+                    .textSelection(.enabled)
                     .font(.system(size: fittedSize(item.answer) - 1))
                     .foregroundColor(answerText)
                     .multilineTextAlignment(.center)
@@ -545,26 +547,8 @@ struct PracticeView: View {
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 14) {
-            editField("Question", text: $editQuestion, weight: .semibold)
-            editField("Answer", text: $editAnswer, weight: .regular)
-        }
-    }
-
-    private func editField(_ label: String, text: Binding<String>, weight: Font.Weight) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
-                .font(.system(size: 10, weight: .semibold)).tracking(0.6)
-                .foregroundColor(mutedText)
-            TextField(label, text: text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: weight))
-                .foregroundColor(primaryText)
-                .lineLimit(1...10)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isDark ? PluckkTheme.Dark.table : PluckkTheme.Light.table)
-                )
+            CardTextField(label: "Question", text: $editQuestion, prominent: true, minLines: 3, autofocus: true)
+            CardTextField(label: "Answer", text: $editAnswer, minLines: 4)
         }
     }
 

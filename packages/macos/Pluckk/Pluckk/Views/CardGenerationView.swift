@@ -756,6 +756,7 @@ struct CardRowView: View {
 
     private func question(_ text: String) -> some View {
         Text(text)
+            .textSelection(.enabled)
             .font(.system(size: 16, weight: .semibold))
             .foregroundColor(questionText)
             .lineSpacing(3)
@@ -764,6 +765,7 @@ struct CardRowView: View {
 
     private func answer(_ text: String) -> some View {
         Text(text)
+            .textSelection(.enabled)
             .font(.system(size: 15))
             .foregroundColor(answerText)
             .lineSpacing(3)

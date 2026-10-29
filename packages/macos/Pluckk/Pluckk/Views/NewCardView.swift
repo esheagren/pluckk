@@ -14,10 +14,8 @@ struct NewCardView: View {
     @State private var saving = false
     @State private var notice: String?
     @State private var savedFlash = false
-    @FocusState private var focus: Field?
+    @State private var focusTrigger = 0
     @Environment(\.colorScheme) private var colorScheme
-
-    private enum Field { case question, answer }
 
     private var isDark: Bool { colorScheme == .dark }
     private var canSave: Bool {
@@ -34,8 +32,9 @@ struct NewCardView: View {
                     deckPicker
                 }
 
-                field("Question", text: $question, focused: .question, weight: .semibold)
-                field("Answer", text: $answer, focused: .answer, weight: .regular)
+                CardTextField(label: "Question", text: $question, prominent: true, minLines: 3,
+                              autofocus: true, focusTrigger: focusTrigger)
+                CardTextField(label: "Answer", text: $answer, minLines: 4)
 
                 Text("**bold**   *italic*   `code`")
                     .font(.system(size: 11, design: .monospaced))
@@ -72,31 +71,10 @@ struct NewCardView: View {
             .padding(20)
         }
         .scrollIndicators(.hidden)
-        .onAppear {
-            focus = .question
-            loadDecks()
-        }
+        .onAppear { loadDecks() }
     }
 
     // MARK: Fields
-
-    private func field(_ label: String, text: Binding<String>, focused: Field, weight: Font.Weight) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
-                .font(.system(size: 10, weight: .semibold)).tracking(0.6)
-                .foregroundColor(.secondary)
-            TextField(label, text: text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: weight))
-                .lineLimit(2...12)
-                .focused($focus, equals: focused)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder, lineWidth: 1))
-        }
-    }
 
     private var deckPicker: some View {
         Picker("Deck", selection: $deckId) {
@@ -231,7 +209,7 @@ struct NewCardView: View {
         image = nil
         imageOnQuestion = false
         if !keepDeck { deckId = "" }
-        focus = .question
+        focusTrigger += 1
     }
 
     private func loadDecks() {
@@ -248,3 +226,55 @@ struct NewCardView: View {
 func cardMarkdown(_ s: String) -> AttributedString {
     (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
 }
+
+/// The field used wherever a card is written or edited (New card, Practice, Decks): roomy, grows
+/// with its text, a quiet fill, and a soft accent border and label while it has focus.
+struct CardTextField: View {
+    let label: String
+    @Binding var text: String
+    /// Question styling (larger, semibold) vs answer styling.
+    var prominent = false
+    var minLines = 3
+    var autofocus = false
+    /// Bump to put the cursor back in this field (e.g. after saving a card).
+    var focusTrigger = 0
+    @FocusState private var focused: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let isDark = colorScheme == .dark
+        VStack(alignment: .leading, spacing: 7) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold)).tracking(0.7)
+                .foregroundColor(focused ? PluckkTheme.accent : .secondary)
+            TextField("", text: $text,
+                      prompt: Text(prominent ? "What do you want to remember?" : "The answer first, then any context")
+                        .foregroundColor(.secondary.opacity(0.55)),
+                      axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: prominent ? 16 : 15, weight: prominent ? .semibold : .regular))
+                .lineSpacing(4)
+                .lineLimit(minLines...16)
+                .focused($focused)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isDark ? Color.white.opacity(0.035) : Color.black.opacity(0.025))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(focused ? PluckkTheme.accent.opacity(0.7)
+                                        : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder),
+                                lineWidth: focused ? 1.5 : 1)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { focused = true }
+                .animation(.easeOut(duration: 0.12), value: focused)
+        }
+        .onAppear { if autofocus { focused = true } }
+        .onChange(of: focusTrigger) { _ in focused = true }
+    }
+}
+

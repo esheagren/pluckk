@@ -403,10 +403,8 @@ private struct LibraryCardRow: View {
         let isDark = colorScheme == .dark
         VStack(alignment: .leading, spacing: 6) {
             if editing {
-                TextField("Question", text: $q, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 13, weight: .semibold)).lineLimit(1...6)
-                TextField("Answer", text: $a, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...6)
+                CardTextField(label: "Question", text: $q, prominent: true, minLines: 2, autofocus: true)
+                CardTextField(label: "Answer", text: $a, minLines: 3)
                 HStack {
                     Spacer()
                     Button("Cancel") { editing = false }
@@ -424,9 +422,11 @@ private struct LibraryCardRow: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(card.question)
                             .font(.system(size: 13, weight: .semibold))
+                            .textSelection(.enabled)
                             .lineLimit(3)
                         Text(card.answer)
                             .font(.system(size: 12))
+                            .textSelection(.enabled)
                             .foregroundColor(.secondary)
                             .lineLimit(2)
                     }
