@@ -5,6 +5,7 @@ struct SidebarView: View {
     let isExpanded: Bool
     var panelWidth: CGFloat = 600
     var isPinned: Bool = false
+    var isFilling: Bool = false
     @ObservedObject private var appState = AppState.shared
     @Environment(\.colorScheme) var colorScheme
 
@@ -48,7 +49,7 @@ struct SidebarView: View {
             backgroundColor.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                GripBar(isPinned: isPinned)
+                GripBar(isPinned: isPinned, isFilling: isFilling)
                     .zIndex(1)  // hover labels draw over the content below
 
                 HStack(spacing: 0) {
@@ -106,6 +107,7 @@ struct SidebarView: View {
 /// practice timer. (Navigation is the rail on the left; see NavRail.)
 struct GripBar: View {
     let isPinned: Bool
+    let isFilling: Bool
     @State private var closeHovering = false
     @State private var pinHovering = false
 
@@ -116,19 +118,24 @@ struct GripBar: View {
             SessionTimerView()
 
             HStack {
-                Button(action: { PluckkPanel.shared?.collapse() }) {
-                    ZStack {
-                        Circle().fill(Color(red: 1.0, green: 0.37, blue: 0.34))
-                        Image(systemName: "xmark")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(.black.opacity(0.6))
-                            .opacity(closeHovering ? 1 : 0)
+                // Red / yellow / green, as on any Mac window; their glyphs show while hovering
+                // the group.
+                HStack(spacing: 8) {
+                    TrafficLight(color: Color(red: 1.0, green: 0.37, blue: 0.34), glyph: "xmark",
+                                 showGlyph: closeHovering, help: "Close") {
+                        PluckkPanel.shared?.collapse()
                     }
-                    .frame(width: 12, height: 12)
+                    TrafficLight(color: Color(red: 1.0, green: 0.74, blue: 0.18), glyph: "minus",
+                                 showGlyph: closeHovering, help: "Minimise (keeps your place)") {
+                        PluckkPanel.shared?.minimize()
+                    }
+                    TrafficLight(color: Color(red: 0.16, green: 0.79, blue: 0.25),
+                                 glyph: isFilling ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                                 showGlyph: closeHovering, help: isFilling ? "Back to the previous size" : "Fill the screen") {
+                        PluckkPanel.shared?.toggleFill()
+                    }
                 }
-                .buttonStyle(.plain)
                 .onHover { closeHovering = $0 }
-                .help("Close")
                 Spacer()
                 Button(action: { PluckkPanel.shared?.togglePinned() }) {
                     Image(systemName: isPinned ? "pin.fill" : "pin")
@@ -236,6 +243,30 @@ struct RailTab: View {
         }
         .accessibilityLabel(label)
         .frame(width: 30, alignment: .leading)
+    }
+}
+
+/// One window-control dot (red, yellow or green).
+struct TrafficLight: View {
+    let color: Color
+    let glyph: String
+    let showGlyph: Bool
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle().fill(color)
+                Image(systemName: glyph)
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundColor(.black.opacity(0.6))
+                    .opacity(showGlyph ? 1 : 0)
+            }
+            .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 

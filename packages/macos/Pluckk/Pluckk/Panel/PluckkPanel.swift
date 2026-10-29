@@ -22,6 +22,9 @@ class PluckkPanel: NSPanel {
     private(set) var expandedHeight: CGFloat = 400
 
     private(set) var isExpanded = false
+    /// Green button: the card fills the screen (menu bar and Dock stay); toggles back.
+    private(set) var isFilling = false
+    private var frameBeforeFill: NSRect?
     private var hostingView: NSHostingView<SidebarView>?
 
     /// Screen the pill currently sits on, tracked by frame (NSScreen objects are recreated).
@@ -78,7 +81,7 @@ class PluckkPanel: NSPanel {
         applySpaceBehavior()
 
         // Set up content view
-        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned)
+        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling)
         hostingView = NSHostingView(rootView: sidebarView)
         // The panel's size is decided here, never by SwiftUI.
         hostingView?.sizingOptions = []
@@ -173,7 +176,8 @@ class PluckkPanel: NSPanel {
     @objc private func screenParametersChanged() {
         if isExpanded {
             let centre = NSPoint(x: frame.midX, y: frame.midY)
-            setFrame(clamped(frame, to: screen(containing: centre) ?? NSScreen.main), display: true)
+            let screen = screen(containing: centre) ?? NSScreen.main
+            setFrame(isFilling ? (screen?.visibleFrame ?? frame) : clamped(frame, to: screen), display: true)
         } else {
             setFrame(collapsedFrame(on: screenUnderMouse()), display: true)
         }
@@ -218,9 +222,38 @@ class PluckkPanel: NSPanel {
         updateHostingView()
     }
 
-    func collapse() {
+    /// Yellow button: down to the pill, keeping what's on the card (captured text, generated
+    /// cards, the current view) for when it opens again.
+    func minimize() { collapse(resetState: false) }
+
+    /// Red button (and ⌘⌘ / hold-⌘): down to the pill, clearing the capture.
+    func collapse() { collapse(resetState: true) }
+
+    /// Green button: fill the screen the card is on, or go back to the size it had before.
+    func toggleFill() {
+        guard isExpanded else { return }
+        let target: NSRect
+        if isFilling, let before = frameBeforeFill {
+            target = before
+            isFilling = false
+        } else {
+            frameBeforeFill = frame
+            let centre = NSPoint(x: frame.midX, y: frame.midY)
+            target = (screen(containing: centre) ?? NSScreen.main)?.visibleFrame ?? frame
+            isFilling = true
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.animator().setFrame(target, display: true)
+        }
+        updateHostingView()
+    }
+
+    private func collapse(resetState: Bool) {
         guard isExpanded else { return }
         isExpanded = false
+        isFilling = false
         applySpaceBehavior()
 
         // No-op unless expand() resized a window
@@ -236,8 +269,8 @@ class PluckkPanel: NSPanel {
             self.animator().setFrame(newFrame, display: true)
         }
 
-        // Reset state when collapsing
-        AppState.shared.reset()
+        // Reset state when collapsing (not when minimising)
+        if resetState { AppState.shared.reset() }
         PracticeSession.shared.panelClosed()
         updateHostingView()
     }
@@ -251,13 +284,14 @@ class PluckkPanel: NSPanel {
     }
 
     private func updateHostingView() {
-        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned)
+        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling)
     }
 
     // MARK: - Resizing (one grip in the bottom-right corner; the top-left corner stays put)
 
     func resize(width: CGFloat, height: CGFloat) {
         guard isExpanded else { return }
+        if isFilling { isFilling = false; updateHostingView() }   // dragging the grip leaves fill
         let newWidth = clampWidth(width)
         let newHeight = clampHeight(height)
         var f = frame
