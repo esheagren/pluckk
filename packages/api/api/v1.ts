@@ -7,13 +7,14 @@
 //   PATCH  cards/:id  · DELETE cards/:id
 //   GET    folders · POST folders · PATCH folders/:id · DELETE folders/:id
 //   GET    review/queue           → { cards, states, new_reviewed_today }
+//   GET    review/today           → { review, learn } left for today across the Mix
 //   POST   review                 { card_id, rating, new_state } → { state }
 //   GET    activity               → { reviews: [...], cards: [...] }
 //   POST   images                 { card_id, image_data, mime_type } → { image_url }
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
-import { selectSession } from '../lib/mixer.js';
+import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { put } from '@vercel/blob';
 import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, createCardBodySchema, parseBody, patchCardBodySchema, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
@@ -290,6 +291,46 @@ router.on('PATCH', 'review/settings', authed(async (req, res, user) => {
   res.status(200).json({ success: true });
 }));
 
+/** What the mixer needs: this user's decks, candidate components, and new cards introduced today. */
+async function mixerContext(userId: string) {
+  const db = getDb();
+  const folderRows = await db.select({
+    id: schema.folders.id, weight: schema.folders.weight, isPaused: schema.folders.isPaused, newPerDay: schema.folders.newPerDay,
+  }).from(schema.folders).where(eq(schema.folders.userId, userId));
+
+  // Slim candidate rows, one per component: id, component, folder, created, state status/due.
+  // A card with no state rows yet is its single 'main' component, new.
+  const candidateRows = (await db.select({
+    cardId: schema.cards.id, componentId: schema.cardReviewState.componentId, folderId: schema.cards.folderId, createdAt: schema.cards.createdAt,
+    status: schema.cardReviewState.status, dueAt: schema.cardReviewState.dueAt,
+  }).from(schema.cards)
+    .leftJoin(schema.cardReviewState, and(eq(schema.cardReviewState.cardId, schema.cards.id), eq(schema.cardReviewState.userId, userId)))
+    .where(and(eq(schema.cards.userId, userId), eq(schema.cards.isDeleted, false))))
+    .map((r) => ({ ...r, componentId: r.componentId ?? MAIN_COMPONENT }));
+
+  // New cards already introduced today, per folder.
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const introduced = await db.execute(sql`
+    select c.folder_id, count(distinct l.card_id)::int as n
+    from review_logs l join cards c on c.id = l.card_id
+    where l.user_id = ${userId} and l.previous_status = 'new' and l.reviewed_at >= ${todayStart.toISOString()}
+    group by c.folder_id`);
+  const newToday = new Map<string | null, number>();
+  for (const r of introduced.rows as Array<{ folder_id: string | null; n: number }>) newToday.set(r.folder_id, r.n);
+
+  return { folderRows, candidateRows, newToday };
+}
+
+// What's left for today across the Mix: { review, learn }. Same rules as a scheduled session.
+router.on('GET', 'review/today', authed(async (_req, res, user) => {
+  const settings = await getStudySettings(user.id);
+  const { folderRows, candidateRows, newToday } = await mixerContext(user.id);
+  res.status(200).json(todayCounts({
+    folders: folderRows, candidates: candidateRows, newReviewedTodayByFolder: newToday,
+    defaultNewPerDay: settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY,
+  }));
+}));
+
 router.on('POST', 'review/session', authed(async (req, res, user) => {
   const body = (req.body ?? {}) as {
     mode?: 'scheduled' | 'focus' | 'backlog';
@@ -306,29 +347,7 @@ router.on('POST', 'review/session', authed(async (req, res, user) => {
   const settings = await getStudySettings(user.id);
   const size = Math.max(1, Math.min(1000, Math.floor(body.size ?? settings.sessionSize ?? DEFAULT_SESSION_SIZE)));
 
-  const folderRows = await db.select({
-    id: schema.folders.id, weight: schema.folders.weight, isPaused: schema.folders.isPaused, newPerDay: schema.folders.newPerDay,
-  }).from(schema.folders).where(eq(schema.folders.userId, user.id));
-
-  // Slim candidate rows, one per component: id, component, folder, created, state status/due.
-  // A card with no state rows yet is its single 'main' component, new.
-  const candidateRows = (await db.select({
-    cardId: schema.cards.id, componentId: schema.cardReviewState.componentId, folderId: schema.cards.folderId, createdAt: schema.cards.createdAt,
-    status: schema.cardReviewState.status, dueAt: schema.cardReviewState.dueAt,
-  }).from(schema.cards)
-    .leftJoin(schema.cardReviewState, and(eq(schema.cardReviewState.cardId, schema.cards.id), eq(schema.cardReviewState.userId, user.id)))
-    .where(and(eq(schema.cards.userId, user.id), eq(schema.cards.isDeleted, false))))
-    .map((r) => ({ ...r, componentId: r.componentId ?? MAIN_COMPONENT }));
-
-  // New cards already introduced today, per folder.
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const introduced = await db.execute(sql`
-    select c.folder_id, count(distinct l.card_id)::int as n
-    from review_logs l join cards c on c.id = l.card_id
-    where l.user_id = ${user.id} and l.previous_status = 'new' and l.reviewed_at >= ${todayStart.toISOString()}
-    group by c.folder_id`);
-  const newToday = new Map<string | null, number>();
-  for (const r of introduced.rows as Array<{ folder_id: string | null; n: number }>) newToday.set(r.folder_id, r.n);
+  const { folderRows, candidateRows, newToday } = await mixerContext(user.id);
 
   const result = selectSession({
     mode, size,

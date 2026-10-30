@@ -79,6 +79,46 @@ export function onePerCard(rows: CandidateRow[]): CandidateRow[] {
   return [...best.values()];
 }
 
+export interface TodayCountsInput {
+  folders: FolderInfo[];
+  candidates: CandidateRow[];
+  newReviewedTodayByFolder: Map<string | null, number>;
+  defaultNewPerDay: number;
+  now?: Date;
+  dueLookaheadHours?: number;
+}
+
+/**
+ * What's left for today across the Mix, by the rules selectSession deals with: paused decks are
+ * out; once any deck has a Mix %, only those decks count; one component per card; new cards are
+ * capped by each deck's remaining new/day budget. `review` = due now, `learn` = new cards today's
+ * limits still allow.
+ */
+export function todayCounts(input: TodayCountsInput): { review: number; learn: number } {
+  const now = input.now ?? new Date();
+  const lookaheadMs = (input.dueLookaheadHours ?? DEFAULT_MECHANICS.dueLookaheadHours) * 60 * MINUTE_MS;
+  const dueCutoff = now.getTime() + lookaheadMs;
+  const paused = new Set(input.folders.filter((f) => f.isPaused).map((f) => f.id));
+  const weighted = input.folders.filter((f) => !f.isPaused && (f.weight ?? 0) > 0).map((f) => f.id);
+  const inMix = (f: string | null) =>
+    weighted.length > 0 ? f !== null && weighted.includes(f) : !(f && paused.has(f));
+
+  let review = 0;
+  const fresh = new Map<string | null, number>();
+  for (const c of onePerCard(input.candidates.filter((x) => inMix(x.folderId)))) {
+    if (!c.status) fresh.set(c.folderId, (fresh.get(c.folderId) ?? 0) + 1);
+    else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) review++;
+  }
+
+  let learn = 0;
+  for (const [f, count] of fresh) {
+    const info = f ? input.folders.find((x) => x.id === f) : null;
+    const cap = info?.newPerDay ?? input.defaultNewPerDay;
+    learn += Math.min(count, Math.max(0, cap - (input.newReviewedTodayByFolder.get(f) ?? 0)));
+  }
+  return { review, learn };
+}
+
 export function selectSession(input: MixerInput): MixerResult {
   const now = input.now ?? new Date();
   const lookaheadMs = (input.dueLookaheadHours ?? DEFAULT_MECHANICS.dueLookaheadHours) * 60 * MINUTE_MS;

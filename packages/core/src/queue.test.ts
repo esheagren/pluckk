@@ -1,7 +1,7 @@
 // The mixer rules, as pure tests. Scenario set ported from the old smoke-mixer.ts
 // (which needed a live database).
 import { describe, expect, it } from 'vitest';
-import { onePerCard, selectSession, type CandidateRow, type FolderInfo, type MixerInput } from './queue.js';
+import { onePerCard, selectSession, todayCounts, type CandidateRow, type FolderInfo, type MixerInput } from './queue.js';
 
 const NOW = new Date('2026-09-02T12:00:00.000Z');
 const PAST = new Date(NOW.getTime() - 3 * 864e5).toISOString();
@@ -113,5 +113,47 @@ describe('look-ahead', () => {
   });
   it('and is due with a 16-hour look-ahead', () => {
     expect(selectSession(input({ mode: 'backlog', folderId: A, candidates: rows, dueLookaheadHours: 16 })).dealt.length).toBe(1);
+  });
+});
+
+describe('todayCounts', () => {
+  const now = new Date('2026-10-30T12:00:00Z');
+  const due = (cardId: string, folderId: string | null) =>
+    ({ cardId, folderId, createdAt: '2026-01-01', status: 'review', dueAt: '2026-10-29T00:00:00Z' });
+  const later = (cardId: string, folderId: string | null) =>
+    ({ cardId, folderId, createdAt: '2026-01-01', status: 'review', dueAt: '2026-12-01T00:00:00Z' });
+  const fresh = (cardId: string, folderId: string | null) =>
+    ({ cardId, folderId, createdAt: '2026-01-01', status: null, dueAt: null });
+  const base = { now, dueLookaheadHours: 0, defaultNewPerDay: 20, newReviewedTodayByFolder: new Map<string | null, number>() };
+  const folder = (id: string, over = {}) => ({ id, weight: null, isPaused: false, newPerDay: null, ...over });
+
+  it('counts due cards and new cards, not future ones', () => {
+    const r = todayCounts({ ...base, folders: [folder('a')], candidates: [due('1', 'a'), later('2', 'a'), fresh('3', 'a')] });
+    expect(r).toEqual({ review: 1, learn: 1 });
+  });
+
+  it('caps new cards by the remaining budget of each deck', () => {
+    const candidates = Array.from({ length: 50 }, (_, i) => fresh(`c${i}`, 'a'));
+    const r = todayCounts({ ...base, folders: [folder('a', { newPerDay: 5 })], candidates,
+      newReviewedTodayByFolder: new Map([['a', 2]]) });
+    expect(r).toEqual({ review: 0, learn: 3 });
+  });
+
+  it('leaves out paused decks and counts unfiled cards', () => {
+    const r = todayCounts({ ...base, folders: [folder('p', { isPaused: true })],
+      candidates: [due('1', 'p'), fresh('2', 'p'), due('3', null)] });
+    expect(r).toEqual({ review: 1, learn: 0 });
+  });
+
+  it('counts only weighted decks once any deck has a Mix %', () => {
+    const r = todayCounts({ ...base, folders: [folder('a', { weight: 50 }), folder('b')],
+      candidates: [due('1', 'a'), due('2', 'b'), due('3', null)] });
+    expect(r).toEqual({ review: 1, learn: 0 });
+  });
+
+  it('counts a card with several components once', () => {
+    const r = todayCounts({ ...base, folders: [folder('a')],
+      candidates: [{ ...due('1', 'a'), componentId: 'forward' }, { ...due('1', 'a'), componentId: 'reverse' }] });
+    expect(r).toEqual({ review: 1, learn: 0 });
   });
 });
