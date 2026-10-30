@@ -136,7 +136,7 @@ enum AssistantTools {
                  schema: object(["id": string], required: ["id"])),
         ToolSpec(name: "list_files", description: "List a folder inside the allowed folders.",
                  schema: object(["path": string], required: ["path"])),
-        ToolSpec(name: "search_files", description: "Search file names and text inside the allowed folders. Each match shows the file and a character offset to read from. Books are under the bookshelf corpus's text folder.",
+        ToolSpec(name: "search_files", description: "Search file names and text inside the allowed folders for an exact phrase, ignoring case. Every file is checked and the files with the most matches come first. Each excerpt shows a character offset to read from. Books are under the bookshelf corpus's text folder; search a title to find its file. Use one distinctive word rather than a long phrase.",
                  schema: object(["query": string, "path": string("Limit to this folder.")], required: ["query"])),
         ToolSpec(name: "read_file", description: "Read a text file, 30,000 characters at a time from an offset.",
                  schema: object(["path": string, "offset": integer], required: ["path"])),

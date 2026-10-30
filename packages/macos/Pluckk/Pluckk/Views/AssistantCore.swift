@@ -349,7 +349,8 @@ struct FileTools {
 
     private static let skippedFolders: Set<String> = [".git", "node_modules", ".venv", "__pycache__", "DerivedData", ".build"]
     private static let readLimit = 30_000
-    private static let searchByteLimit = 6_000_000
+    private static let searchByteLimit = 30_000_000
+    private static let binaryExtensions: Set<String> = ["epub", "pdf", "sqlite", "db", "wal", "shm", "zip", "gz", "png", "jpg", "jpeg", "gif", "mobi", "azw3"]
 
     struct FileError: LocalizedError {
         let message: String
@@ -396,34 +397,83 @@ struct FileTools {
         return lines.isEmpty ? "(empty folder)" : "\(dir)\n" + lines.joined(separator: "\n")
     }
 
-    /// File names and text contents, case-insensitive, with a short excerpt around each match.
+    /// Every text file under the folders is checked, so a book late in the alphabet is found as
+    /// surely as an early one, and the files with the most matches come first. Case is ignored
+    /// for ASCII. If time runs out the result says so, so "no matches" always means none.
     func search(_ query: String, in path: String?) throws -> String {
         let folders = try path.map { [try resolve($0)] } ?? roots.map(canonical)
-        let deadline = Date().addingTimeInterval(10)
-        var results: [String] = []
-        for folder in folders {
+        let needle = Array(query.lowercased().utf8)
+        let nameKey = Self.nameKey(query)
+        guard !needle.isEmpty else { return "Nothing to search for." }
+        let deadline = Date().addingTimeInterval(20)
+        var names: [String] = []
+        var found: [(file: String, offsets: [Int], count: Int)] = []
+        var finished = true
+        walk: for folder in folders {
             guard let walker = FileManager.default.enumerator(atPath: folder) else { continue }
             while let relative = walker.nextObject() as? String {
-                if results.count >= 40 || Date() > deadline { break }
+                if Date() > deadline { finished = false; break walk }
                 let name = (relative as NSString).lastPathComponent
                 if name.hasPrefix(".") || Self.skippedFolders.contains(name) { walker.skipDescendants(); continue }
+                if Self.binaryExtensions.contains((name as NSString).pathExtension.lowercased()) { continue }
                 let full = (folder as NSString).appendingPathComponent(relative)
-                if name.range(of: query, options: .caseInsensitive) != nil { results.append("\(full)  (name matches)") }
-                guard let text = Self.text(at: full, maxBytes: Self.searchByteLimit) else { continue }
-                var from = text.startIndex
-                var hits = 0
-                while hits < 4, let match = text.range(of: query, options: .caseInsensitive, range: from..<text.endIndex) {
-                    let start = text.index(match.lowerBound, offsetBy: -120, limitedBy: text.startIndex) ?? text.startIndex
-                    let end = text.index(match.upperBound, offsetBy: 120, limitedBy: text.endIndex) ?? text.endIndex
-                    let offset = text.distance(from: text.startIndex, to: match.lowerBound)
-                    let excerpt = text[start..<end].replacingOccurrences(of: "\n", with: " ")
-                    results.append("\(full) @\(offset): …\(excerpt)…")
-                    from = match.upperBound
-                    hits += 1
-                }
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue else { continue }
+                if !nameKey.isEmpty, Self.nameKey(name).contains(nameKey) { names.append(full) }
+                guard let bytes = Self.lowercasedBytes(at: full) else { continue }
+                let hits = Self.matches(of: needle, in: bytes)
+                if hits.count > 0 { found.append((full, hits.first, hits.count)) }
             }
         }
-        return results.isEmpty ? "No matches for “\(query)”." : results.joined(separator: "\n")
+
+        var lines: [String] = []
+        if !names.isEmpty { lines.append("File names matching “\(query)”:\n" + names.prefix(20).joined(separator: "\n")) }
+        if !found.isEmpty {
+            found.sort { $0.count > $1.count }
+            lines.append("“\(query)” appears \(found.map(\.count).reduce(0, +)) times in \(found.count) file(s), most matches first:")
+            for (rank, hit) in found.prefix(30).enumerated() {
+                lines.append("\(hit.file) (\(hit.count))")
+                guard rank < 10, let data = FileManager.default.contents(atPath: hit.file) else { continue }
+                for offset in hit.offsets {
+                    let excerpt = data[max(0, offset - 160)..<min(data.count, offset + needle.count + 160)]
+                    let text = String(decoding: excerpt, as: UTF8.self).replacingOccurrences(of: "\n", with: " ")
+                    lines.append("  @\(String(decoding: data[..<offset], as: UTF8.self).count): …\(text)…")
+                }
+            }
+            if found.count > 30 { lines.append("…and \(found.count - 30) more file(s).") }
+        }
+        if !finished { lines.append("The search ran out of time and some files weren't checked. Narrow it with path.") }
+        return lines.isEmpty ? "No file name or text matches “\(query)”." : lines.joined(separator: "\n")
+    }
+
+    /// So "enlightened economy" finds the_enlightened_economy_5.txt.
+    private static func nameKey(_ text: String) -> String {
+        text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private static func lowercasedBytes(at path: String) -> [UInt8]? {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int, size <= searchByteLimit,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
+              !data.prefix(4096).contains(0) else { return nil }
+        var bytes = [UInt8](data)
+        bytes.withUnsafeMutableBufferPointer { buffer in
+            for i in buffer.indices where buffer[i] >= 65 && buffer[i] <= 90 { buffer[i] += 32 }
+        }
+        return bytes
+    }
+
+    /// The first three byte offsets of `needle`, and how many times it occurs in all.
+    private static func matches(of needle: [UInt8], in bytes: [UInt8]) -> (first: [Int], count: Int) {
+        var first: [Int] = [], count = 0, from = 0
+        bytes.withUnsafeBytes { hay in
+            while from < hay.count, let hit = memmem(hay.baseAddress! + from, hay.count - from, needle, needle.count) {
+                let offset = hit - UnsafeMutableRawPointer(mutating: hay.baseAddress!)
+                if count < 3 { first.append(offset) }
+                count += 1
+                from = offset + needle.count
+            }
+        }
+        return (first, count)
     }
 
     /// Up to 30,000 characters from `offset` (matches from search report their offset).
