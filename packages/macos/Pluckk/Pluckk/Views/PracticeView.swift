@@ -573,14 +573,13 @@ struct PracticeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
                     .frame(maxHeight: .infinity)
-                if session.canEditCurrent { addCardButton }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: 14) {
                             card(item)
                             ForEach($splitCards) { splitCardEditor($0).id($0.wrappedValue.id) }
-                            if session.canEditCurrent { addCardButton.id("addCard") }
+                            if session.editing { addCardButton.id("addCard") }
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 4)
@@ -758,13 +757,9 @@ struct PracticeView: View {
         session.beginEdit()
     }
 
-    /// Below the card: opens a blank card, to split this one in two or more. From a card being
-    /// reviewed it opens the editor too, since the split usually changes the original as well.
+    /// Below the card while editing: opens a blank card, to split this one in two or more.
     private var addCardButton: some View {
-        Button(action: {
-            if !session.editing { beginEditing() }
-            if session.editing { splitCards.append(SplitCard()) }
-        }) {
+        Button(action: { splitCards.append(SplitCard()) }) {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(mutedText)
