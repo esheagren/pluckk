@@ -32,6 +32,19 @@ function input(over: Partial<MixerInput>): MixerInput {
 const inFolder = (r: ReturnType<typeof selectSession>, f: string, cands: CandidateRow[]) =>
   r.dealt.filter((d) => cands.find((c) => c.cardId === d.cardId)?.folderId === f).length;
 
+describe('cards never reviewed', () => {
+  it('are capped by the deck limit even with a schedule row', () => {
+    const unseen = mk(A, 6, true, 'ur').map((c) => ({ ...c, status: 'new' }));
+    const r = selectSession(input({ mode: 'focus', folderId: A, candidates: unseen }));
+    expect(r.dealt).toHaveLength(3);          // deck A allows 3 a day
+  });
+  it('come after due reviews', () => {
+    const unseen = mk(A, 2, true, 'ur').map((c) => ({ ...c, status: 'new' }));
+    const r = selectSession(input({ mode: 'focus', folderId: A, size: 3, candidates: [...unseen, ...mk(A, 2, true, 'ad')] }));
+    expect(r.dealtIds).toEqual(['ad0', 'ad1', 'ur0']);
+  });
+});
+
 describe('practising ahead', () => {
   it('deals new cards past the daily limit, from one folder', () => {
     const r = selectSession(input({ mode: 'ahead', folderId: A, size: 7, newReviewedTodayByFolder: new Map([[A, 3]]) }));
@@ -167,10 +180,10 @@ describe('todayCounts', () => {
     expect(r).toEqual({ review: 1, learn: 0 });
   });
 
-  it('counts a due card that has never been reviewed as one to learn, outside the new/day cap', () => {
-    const r = todayCounts({ ...base, folders: [folder('a', { newPerDay: 0 })],
-      candidates: [{ ...due('1', 'a'), status: 'new' }, fresh('2', 'a')] });
-    expect(r).toEqual({ review: 0, learn: 1 });
+  it('counts a never-reviewed card with a schedule row as new, inside the new/day cap', () => {
+    const candidates = [{ ...due('1', 'a'), status: 'new' }, fresh('2', 'a')];
+    expect(todayCounts({ ...base, folders: [folder('a', { newPerDay: 0 })], candidates })).toEqual({ review: 0, learn: 0 });
+    expect(todayCounts({ ...base, folders: [folder('a', { newPerDay: 1 })], candidates })).toEqual({ review: 0, learn: 1 });
   });
 
   it('counts a card with several components once', () => {

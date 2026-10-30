@@ -553,6 +553,7 @@ final class AssistantSession: ObservableObject {
             if !cards.isEmpty { lines.append("Generated, not yet stored:\n" + cards.joined(separator: "\n")) }
         case .newCard: lines.append("View: New card")
         case .decks: lines.append("View: Decks")
+        case .statistics: lines.append("View: Statistics")
         case .terminal: lines.append("View: Terminal")
         case .settings: lines.append("View: Settings")
         }

@@ -84,6 +84,12 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    case .statistics:
+                        if appState.isAuthenticated {
+                            StatisticsView()
+                        } else {
+                            LoginView()
+                        }
                     case .terminal:
                         TerminalPanelView()
                     case .settings:
@@ -194,6 +200,7 @@ struct NavRail: View {
             tab(.generate, icon: "sparkles", label: "Create")
             tab(.newCard, icon: "plus", label: "New card")
             tab(.decks, icon: "square.grid.2x2", label: "Decks")
+            tab(.statistics, icon: "chart.pie", label: "Statistics")
             Spacer()
             tab(.settings, icon: "gearshape", label: "Settings")
         }

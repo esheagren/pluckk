@@ -305,6 +305,21 @@ class PluckkAPI {
     // MARK: - Library (decks, cards, activity)
 
     /// Every deck with its card counts; the unfiled cards come back as a deck with no id.
+    /// New cards a day for decks with no limit of their own, and for unfiled cards.
+    func defaultNewPerDay(token: String) async throws -> Int {
+        struct Settings: Decodable { let new_cards_per_day: Int }
+        let data = try await send(token: token, method: "GET", path: "/api/v1/review/settings")
+        return try JSONDecoder().decode(Settings.self, from: data).new_cards_per_day
+    }
+
+    func setDefaultNewPerDay(token: String, value: Int) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/review/settings", json: ["new_cards_per_day": value])
+    }
+
+    func setDeckNewPerDay(token: String, folderId: String, value: Int) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/folders/\(folderId)", json: ["new_per_day": value])
+    }
+
     func reviewDecks(token: String) async throws -> [DeckSummary] {
         struct Response: Decodable { let decks: [DeckSummary] }
         let data = try await send(token: token, method: "GET", path: "/api/v1/review/decks")
@@ -423,6 +438,7 @@ struct DeckSummary: Decodable, Identifiable, Hashable {
     let folder_id: String?
     let name: String?
     let is_paused: Bool
+    let new_per_day: Int?
     let total: Int
     let new: Int
     let due: Int

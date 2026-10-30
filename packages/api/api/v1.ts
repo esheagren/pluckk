@@ -259,7 +259,7 @@ async function getStudySettings(userId: string) {
 // Per-deck review summary for the Focused Review page (includes paused + unfiled).
 router.on('GET', 'review/decks', authed(async (_req, res, user) => {
   const r = await getDb().execute(sql`
-    select c.folder_id, f.name, coalesce(f.is_paused, false) as is_paused,
+    select c.folder_id, f.name, coalesce(f.is_paused, false) as is_paused, f.new_per_day,
            count(distinct c.id)::int as total,
            count(distinct c.id) filter (where s.id is null or s.status = 'new')::int as new,
            count(distinct c.id) filter (where s.due_at <= now() + make_interval(hours => ${DEFAULT_MECHANICS.dueLookaheadHours}) and s.status <> 'new')::int as due
@@ -267,7 +267,7 @@ router.on('GET', 'review/decks', authed(async (_req, res, user) => {
     left join folders f on f.id = c.folder_id
     left join card_review_state s on s.card_id = c.id and s.user_id = c.user_id
     where c.user_id = ${user.id} and c.is_deleted = false
-    group by c.folder_id, f.name, f.is_paused
+    group by c.folder_id, f.name, f.is_paused, f.new_per_day
     order by f.name nulls last`);
   res.status(200).json({ decks: r.rows });
 }));

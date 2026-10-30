@@ -18,12 +18,13 @@ enum CapturedContent: Equatable {
 
 /// The panel's views, one per icon in the left rail: practice (native review; ⌘⌘ with
 /// nothing selected), capture → generate, a hand-written new card, decks (browse and curate),
-/// and settings.
+/// statistics, and settings.
 enum PanelView {
     case generate
     case practice
     case newCard
     case decks
+    case statistics
     case terminal
     case settings
 }

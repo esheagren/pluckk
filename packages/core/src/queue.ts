@@ -20,7 +20,7 @@ export interface CandidateRow {
   componentId?: ComponentId;
   folderId: string | null;
   createdAt: string;
-  status: string | null;   // review-state status, null = new
+  status: string | null;   // review-state status, null = no row yet; see isUnseen
   dueAt: string | null;
 }
 
@@ -68,6 +68,9 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
+/** Never reviewed, so new to the person, whether or not it has a schedule row yet. */
+const isUnseen = (c: CandidateRow): boolean => !c.status || c.status === 'new';
+
 /** Keep one component per card: the earliest-due one, ties by component order. */
 export function onePerCard(rows: CandidateRow[]): CandidateRow[] {
   const best = new Map<string, CandidateRow>();
@@ -108,13 +111,8 @@ export function todayCounts(input: TodayCountsInput): { review: number; learn: n
   let learn = 0;
   const fresh = new Map<string | null, number>();
   for (const c of onePerCard(input.candidates.filter((x) => inMix(x.folderId)))) {
-    if (!c.status) fresh.set(c.folderId, (fresh.get(c.folderId) ?? 0) + 1);
-    else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) {
-      // A card with a schedule row but no reviews yet: the mixer deals it as due (uncapped), and
-      // clients show it as new, so it counts as one to learn.
-      if (c.status === 'new') learn++;
-      else review++;
-    }
+    if (isUnseen(c)) fresh.set(c.folderId, (fresh.get(c.folderId) ?? 0) + 1);
+    else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) review++;
   }
 
   for (const [f, count] of fresh) {
@@ -135,12 +133,12 @@ export function selectSession(input: MixerInput): MixerResult {
   const target = input.mode !== 'scheduled' ? input.folderId ?? null : undefined;
   const candidates = onePerCard(input.candidates.filter((c) => !(c.folderId && paused.has(c.folderId) && c.folderId !== target)));
 
-  // Partition per folder into due (state exists, due_at <= cutoff) and new (no state).
+  // Partition per folder into due (reviewed before, due_at <= cutoff) and new (never reviewed).
   const byFolder = new Map<string | null, { due: CandidateRow[]; fresh: CandidateRow[] }>();
   for (const c of candidates) {
     let b = byFolder.get(c.folderId);
     if (!b) { b = { due: [], fresh: [] }; byFolder.set(c.folderId, b); }
-    if (!c.status) b.fresh.push(c);
+    if (isUnseen(c)) b.fresh.push(c);
     else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) b.due.push(c);
   }
   for (const b of byFolder.values()) {
@@ -168,7 +166,7 @@ export function selectSession(input: MixerInput): MixerResult {
     if (take.length < quota) take.push(...b.fresh.slice(0, Math.min(quota - take.length, newBudget(f))));
     // remove taken so redistribution passes don't re-take
     b.due = b.due.slice(Math.min(quota, take.length));
-    const newTaken = take.filter((c) => !c.status).length;
+    const newTaken = take.filter(isUnseen).length;
     b.fresh = b.fresh.slice(newTaken);
     input.newReviewedTodayByFolder.set(f, (input.newReviewedTodayByFolder.get(f) ?? 0) + newTaken);
     return take;

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		029 /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131 /* StatisticsView.swift */; };
 		028 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* AssistantView.swift */; };
 		027 /* AssistantEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129 /* AssistantEngine.swift */; };
 		026 /* AssistantCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128 /* AssistantCore.swift */; };
@@ -39,6 +40,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		131 /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		130 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		129 /* AssistantEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEngine.swift; sourceTree = "<group>"; };
 		128 /* AssistantCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCore.swift; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				131 /* StatisticsView.swift */,
 				130 /* AssistantView.swift */,
 				129 /* AssistantEngine.swift */,
 				128 /* AssistantCore.swift */,
@@ -282,6 +285,7 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				029 /* StatisticsView.swift in Sources */,
 				028 /* AssistantView.swift in Sources */,
 				027 /* AssistantEngine.swift in Sources */,
 				026 /* AssistantCore.swift in Sources */,
