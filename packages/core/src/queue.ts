@@ -92,7 +92,7 @@ export interface TodayCountsInput {
  * What's left for today across the Mix, by the rules selectSession deals with: paused decks are
  * out; once any deck has a Mix %, only those decks count; one component per card; new cards are
  * capped by each deck's remaining new/day budget. `review` = due now, `learn` = new cards today's
- * limits still allow.
+ * limits still allow. Together they equal what an uncapped session would deal.
  */
 export function todayCounts(input: TodayCountsInput): { review: number; learn: number } {
   const now = input.now ?? new Date();
@@ -104,13 +104,18 @@ export function todayCounts(input: TodayCountsInput): { review: number; learn: n
     weighted.length > 0 ? f !== null && weighted.includes(f) : !(f && paused.has(f));
 
   let review = 0;
+  let learn = 0;
   const fresh = new Map<string | null, number>();
   for (const c of onePerCard(input.candidates.filter((x) => inMix(x.folderId)))) {
     if (!c.status) fresh.set(c.folderId, (fresh.get(c.folderId) ?? 0) + 1);
-    else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) review++;
+    else if (c.dueAt && new Date(c.dueAt).getTime() <= dueCutoff) {
+      // A card with a schedule row but no reviews yet: the mixer deals it as due (uncapped), and
+      // clients show it as new, so it counts as one to learn.
+      if (c.status === 'new') learn++;
+      else review++;
+    }
   }
 
-  let learn = 0;
   for (const [f, count] of fresh) {
     const info = f ? input.folders.find((x) => x.id === f) : null;
     const cap = info?.newPerDay ?? input.defaultNewPerDay;

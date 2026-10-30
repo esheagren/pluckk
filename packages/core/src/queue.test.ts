@@ -151,6 +151,12 @@ describe('todayCounts', () => {
     expect(r).toEqual({ review: 1, learn: 0 });
   });
 
+  it('counts a due card that has never been reviewed as one to learn, outside the new/day cap', () => {
+    const r = todayCounts({ ...base, folders: [folder('a', { newPerDay: 0 })],
+      candidates: [{ ...due('1', 'a'), status: 'new' }, fresh('2', 'a')] });
+    expect(r).toEqual({ review: 0, learn: 1 });
+  });
+
   it('counts a card with several components once', () => {
     const r = todayCounts({ ...base, folders: [folder('a')],
       candidates: [{ ...due('1', 'a'), componentId: 'forward' }, { ...due('1', 'a'), componentId: 'reverse' }] });
