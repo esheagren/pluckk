@@ -203,6 +203,7 @@ class PluckkPanel: NSPanel {
         guard !isExpanded else { return }
         isExpanded = true
         applySpaceBehavior()
+        PracticeSession.shared.refreshTodayCounts()
 
         if pushesWindowAside {
             WindowResizer.shared.makeRoomForPanel(panelWidth: expandedWidth)

@@ -88,6 +88,22 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    /// What's left today across the mix, shown beside the timer.
+    @Published private(set) var todayCounts: TodayCounts?
+    private var countsRequest = 0
+
+    /// Re-fetch the counts; a slower, older response never overwrites a newer one.
+    func refreshTodayCounts() {
+        guard let token = AuthManager.shared.accessToken else { return }
+        countsRequest += 1
+        let request = countsRequest
+        Task {
+            if let counts = try? await PluckkAPI.shared.reviewToday(token: token), request == countsRequest {
+                todayCounts = counts
+            }
+        }
+    }
+
     /// The deck being practised on its own, or nil for the usual mix of all decks.
     @Published private(set) var focusDeck: DeckSummary?
 
@@ -121,6 +137,7 @@ final class PracticeSession: ObservableObject {
                 history = []
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
+                refreshTodayCounts()
             } catch {
                 phase = .failed(error.localizedDescription)
             }
@@ -194,6 +211,7 @@ final class PracticeSession: ObservableObject {
                     index += 1
                 }
                 advance()
+                refreshTodayCounts()
             } catch {
                 notice = "Couldn't save that rating: \(error.localizedDescription)"
             }
@@ -233,6 +251,7 @@ final class PracticeSession: ObservableObject {
                 timesUp = false
                 phase = .reviewing
                 shownAt = Date()
+                refreshTodayCounts()
             } catch {
                 notice = "Couldn't undo: \(error.localizedDescription)"
             }
@@ -305,6 +324,7 @@ final class PracticeSession: ObservableObject {
                 queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != item.card_id }
                 if let eventId { remember(.deletion(eventId: eventId, index: index, removed: removed)) }
                 advance()
+                refreshTodayCounts()
             } catch {
                 notice = "Couldn't delete the card: \(error.localizedDescription)"
             }

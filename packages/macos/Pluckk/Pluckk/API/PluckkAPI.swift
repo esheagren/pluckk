@@ -246,6 +246,12 @@ class PluckkAPI {
         return try JSONDecoder().decode(Response.self, from: data).items
     }
 
+    /// What's left for today across the mix, by the same rules that deal a session.
+    func reviewToday(token: String) async throws -> TodayCounts {
+        let data = try await send(token: token, method: "GET", path: "/api/v1/review/today")
+        return try JSONDecoder().decode(TodayCounts.self, from: data)
+    }
+
     struct ReviewResult: Decodable {
         let event_id: String
         let previews: IntervalPreviews
@@ -382,6 +388,12 @@ class PluckkAPI {
 struct MochiDeck: Decodable {
     let id: String
     let name: String
+}
+
+/// Cards still to review today and new cards today's limits still allow.
+struct TodayCounts: Decodable, Equatable {
+    let review: Int
+    let learn: Int
 }
 
 /// A deck and its counts, from /api/v1/review/decks.
