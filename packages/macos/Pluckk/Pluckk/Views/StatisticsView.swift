@@ -1,30 +1,29 @@
 import SwiftUI
 
 /// How new cards reach you: one daily total, shared out around a ring. Each deck sits beside its
-/// slice, and the handles between slices drag cards from one deck to its neighbour, keeping the
-/// total. Limits save as they change. More statistics over time can sit alongside this.
+/// slice. The handles work like a slider with several thumbs laid round the ring: one grows the
+/// deck on the side it's leaving and takes from the decks ahead of it, keeping the total. Limits
+/// save as they change. More statistics over time can sit alongside this.
 struct StatisticsView: View {
     @State private var decks: [DeckSummary] = []
     @State private var limits: [String: Int] = [:]      // by deck id
     @State private var dirty: Set<String> = []
     @State private var saveTask: Task<Void, Never>?
     @State private var notice: String?
-    /// Where the first slice starts, as a fraction of the ring (the handle there moves too).
-    @State private var origin = 0.0
     @State private var drag: HandleDrag?
     @State private var hoveredHandle: Int?
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
     private static let labelHeight: CGFloat = 58
+    /// The least of the ring a deck is drawn with, so one at 0 keeps a sliver and its own handle.
+    private static let minimumShare = 0.02
 
     /// A handle being dragged. It's tracked as movement since the last event, so the pointer
     /// crossing the far side of the ring can't make the slices jump.
     private struct HandleDrag {
         let index: Int
-        let before: Int         // the deck's limit at the start, either side of the handle
-        let after: Int
-        let origin: Double
+        let start: [Int]        // every deck's limit when the drag began
         var lastFraction: Double
         var moved = 0.0
     }
@@ -60,7 +59,7 @@ struct StatisticsView: View {
                     GeometryReader { geo in ringWithDecks(in: geo.size) }
                         .frame(height: max(440, outer.size.height - 110))
 
-                    Text(notice ?? "Drag a handle on the ring to move cards between neighbouring decks, or type a number.")
+                    Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly.")
                         .font(.system(size: 11))
                         .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
                         .frame(maxWidth: .infinity)
@@ -83,11 +82,13 @@ struct StatisticsView: View {
 
     private var slices: [Slice] {
         guard !active.isEmpty else { return [] }
-        var position = origin
-        return active.map { deck in
-            let share = total > 0 ? Double(limit(deck)) / Double(total) : 1 / Double(active.count)
-            defer { position += share }
-            return Slice(deck: deck, start: position, end: position + share)
+        let shares = active.map { total > 0 ? Double(limit($0)) / Double(total) : 1 / Double(active.count) }
+        let drawn = shares.map { max($0, Self.minimumShare) }
+        let scale = drawn.reduce(0, +)
+        var position = 0.0
+        return zip(active, drawn).map { deck, share in
+            defer { position += share / scale }
+            return Slice(deck: deck, start: position, end: position + share / scale)
         }
     }
 
@@ -104,14 +105,6 @@ struct StatisticsView: View {
         let placed = placeLabels(current, center: center, radius: radius, height: size.height)
 
         return ZStack {
-            // Leaders first, so the ring and labels sit over them.
-            ForEach(placed, id: \.slice.deck.id) { label in
-                Path { path in
-                    path.move(to: point(label.slice.middle, radius + Self.ringWidth / 2 + 3, around: center))
-                    path.addLine(to: CGPoint(x: center.x + (label.onRight ? 1 : -1) * (radius + 36), y: label.y))
-                }
-                .stroke(color(label.slice.deck).opacity(0.45), lineWidth: 1)
-            }
             ForEach(current, id: \.deck.id) { slice in
                 RingArc(start: slice.start, end: slice.end)
                     .stroke(color(slice.deck), lineWidth: Self.ringWidth)
@@ -126,11 +119,11 @@ struct StatisticsView: View {
             ForEach(placed, id: \.slice.deck.id) { label in
                 deckLabel(label.slice, onRight: label.onRight)
                     .frame(width: labelWidth, height: Self.labelHeight, alignment: label.onRight ? .leading : .trailing)
-                    .position(x: center.x + (label.onRight ? 1 : -1) * (radius + 42 + labelWidth / 2), y: label.y)
+                    .position(x: center.x + (label.onRight ? 1 : -1) * (radius + 34 + labelWidth / 2), y: label.y)
                     .animation(.easeOut(duration: 0.15), value: label.y)
             }
             if current.count > 1 && total > 0 {
-                ForEach(current.indices, id: \.self) { index in
+                ForEach(current.indices.dropLast(), id: \.self) { index in
                     handle(index, slices: current, radius: radius, center: center)
                 }
             }
@@ -172,12 +165,15 @@ struct StatisticsView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(color(deck))
                 .lineLimit(1)
-            HStack(spacing: 3) {
-                TextField("", value: Binding(get: { limit(deck) }, set: { setLimit(deck, $0) }), format: .number)
+            HStack(spacing: 4) {
+                stepButton("minus") { setLimit(deck, limit(deck) - 1) }
+                TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .multilineTextAlignment(onRight ? .leading : .trailing)
-                    .fixedSize()
+                    .multilineTextAlignment(.center)
+                    .frame(width: 34, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
+                stepButton("plus") { setLimit(deck, limit(deck) + 1) }
                 Text("a day · \(share)%")
             }
             .font(.system(size: 12).monospacedDigit())
@@ -188,13 +184,24 @@ struct StatisticsView: View {
         }
     }
 
+    private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.secondary)
+                .frame(width: 18, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func handle(_ index: Int, slices: [Slice], radius: CGFloat, center: CGPoint) -> some View {
         let active = drag?.index == index || hoveredHandle == index
         return Circle()
             .fill(Color.white)
             .frame(width: active ? 16 : 11, height: active ? 16 : 11)
             .shadow(color: .black.opacity(0.5), radius: 2)
-            .frame(width: 30, height: 30)
+            .frame(width: 22, height: 22)
             .contentShape(Circle())
             .onHover { inside in
                 hoveredHandle = inside ? index : (hoveredHandle == index ? nil : hoveredHandle)
@@ -202,19 +209,16 @@ struct StatisticsView: View {
             }
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("ring"))
-                    .onChanged { dragHandle(index, value: $0, slices: slices, center: center) }
+                    .onChanged { dragHandle(index, value: $0, center: center) }
                     .onEnded { _ in drag = nil }
             )
             .animation(.easeOut(duration: 0.1), value: active)
-            .position(point(slices[index].start, radius, around: center))   // last: it fills the ring
+            .position(point(slices[index].end, radius, around: center))   // last: it fills the ring
     }
 
-    private func dragHandle(_ index: Int, value: DragGesture.Value, slices: [Slice], center: CGPoint) {
-        let before = slices[(index + slices.count - 1) % slices.count].deck
-        let after = slices[index].deck
+    private func dragHandle(_ index: Int, value: DragGesture.Value, center: CGPoint) {
         let fraction = { (p: CGPoint) in Double(atan2(p.y - center.y, p.x - center.x)) / (2 * .pi) + 0.25 }
-        var current = drag ?? HandleDrag(index: index, before: limit(before), after: limit(after), origin: origin,
-                                         lastFraction: fraction(value.startLocation))
+        var current = drag ?? HandleDrag(index: index, start: active.map(limit), lastFraction: fraction(value.startLocation))
         let here = fraction(value.location)
         var step = (here - current.lastFraction).truncatingRemainder(dividingBy: 1)
         if step > 0.5 { step -= 1 } else if step < -0.5 { step += 1 }
@@ -222,13 +226,25 @@ struct StatisticsView: View {
         current.lastFraction = here
         drag = current
 
-        let pair = current.before + current.after
-        let moved = Int((current.moved * Double(total)).rounded())
-        let next = min(max(current.before + moved, max(0, pair - 500)), min(pair, 500))
-        let shift = Double(next - current.before) / Double(max(total, 1))
-        setLimit(before, next)
-        setLimit(after, pair - next)
-        if index == 0 { origin = current.origin + shift }
+        let cards = Int((current.moved * Double(current.start.reduce(0, +))).rounded())
+        let shared = Self.moved(cards, across: index, from: current.start)
+        for (deck, value) in zip(active, shared) { setLimit(deck, value) }
+    }
+
+    /// Moves cards over the boundary after deck `index`. Clockwise grows that deck and takes from
+    /// the decks ahead, nearest first; anticlockwise grows the next deck and takes from those
+    /// behind. Passing over decks at 0 is what keeps every handle usable.
+    static func moved(_ cards: Int, across index: Int, from start: [Int]) -> [Int] {
+        var limits = start
+        let takers = cards > 0 ? Array(start.indices[(index + 1)...]) : Array(start.indices[...index].reversed())
+        var wanted = abs(cards)
+        for deck in takers where wanted > 0 {
+            let taken = min(limits[deck], wanted)
+            limits[deck] -= taken
+            wanted -= taken
+        }
+        limits[cards > 0 ? index : index + 1] += abs(cards) - wanted
+        return limits
     }
 
     /// At this deck's limit, how long until its new cards run out.
@@ -245,7 +261,7 @@ struct StatisticsView: View {
     // MARK: Changing limits
 
     private func setLimit(_ deck: DeckSummary, _ value: Int) {
-        limits[deck.id] = min(max(value, 0), 500)
+        limits[deck.id] = min(max(value, 0), 2000)
         dirty.insert(deck.id)
         scheduleSave()
     }
