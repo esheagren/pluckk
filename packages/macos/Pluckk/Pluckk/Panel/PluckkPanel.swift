@@ -13,7 +13,7 @@ class PluckkPanel: NSPanel {
     private let collapsedWidth: CGFloat = 64
     private let collapsedHeight: CGFloat = 6
     private let minExpandedWidth: CGFloat = 440
-    private let maxExpandedWidth: CGFloat = 900
+    private let maxExpandedWidth: CGFloat = 1400
     private let minExpandedHeight: CGFloat = 280
     private let maxExpandedHeight: CGFloat = 900
     private let bottomMargin: CGFloat = 8
@@ -24,6 +24,11 @@ class PluckkPanel: NSPanel {
     private(set) var isExpanded = false
     /// Green button: the card fills the screen (menu bar and Dock stay); toggles back.
     private(set) var isFilling = false
+    /// The assistant panel on the card's right. The window grows to make room, so the card itself
+    /// keeps its size.
+    private(set) var isAssistantOpen = UserDefaults.standard.bool(forKey: "assistantOpen")
+    static let assistantWidth: CGFloat = 360
+    private var assistantRoom: CGFloat { isAssistantOpen ? Self.assistantWidth : 0 }
     private var frameBeforeFill: NSRect?
     private var hostingView: NSHostingView<SidebarView>?
 
@@ -81,7 +86,7 @@ class PluckkPanel: NSPanel {
         applySpaceBehavior()
 
         // Set up content view
-        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling)
+        let sidebarView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling, isAssistantOpen: isAssistantOpen)
         hostingView = NSHostingView(rootView: sidebarView)
         // The panel's size is decided here, never by SwiftUI.
         hostingView?.sizingOptions = []
@@ -160,7 +165,7 @@ class PluckkPanel: NSPanel {
         let mouse = NSEvent.mouseLocation
         let target = screen(containing: mouse) ?? NSScreen.main
         let area = target?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let size = NSSize(width: expandedWidth, height: expandedHeight)
+        let size = NSSize(width: expandedWidth + assistantRoom, height: expandedHeight)
         var origin = NSPoint(x: mouse.x - size.width / 2, y: mouse.y - cursorGap - size.height)
         if origin.y < area.minY {
             origin.y = mouse.y + cursorGap
@@ -230,6 +235,20 @@ class PluckkPanel: NSPanel {
     /// Red button (and ⌘⌘ / hold-⌘): down to the pill, clearing the capture.
     func collapse() { collapse(resetState: true) }
 
+    func toggleAssistant() {
+        guard isExpanded else { return }
+        isAssistantOpen.toggle()
+        AssistantSession.shared.wantsFocus = isAssistantOpen
+        UserDefaults.standard.set(isAssistantOpen, forKey: "assistantOpen")
+        if !isFilling {
+            var target = frame
+            target.size.width += isAssistantOpen ? Self.assistantWidth : -Self.assistantWidth
+            let centre = NSPoint(x: frame.midX, y: frame.midY)
+            setFrame(clamped(target, to: screen(containing: centre) ?? NSScreen.main), display: true, animate: true)
+        }
+        updateHostingView()
+    }
+
     /// Green button: fill the screen the card is on, or go back to the size it had before.
     func toggleFill() {
         guard isExpanded else { return }
@@ -285,7 +304,7 @@ class PluckkPanel: NSPanel {
     }
 
     private func updateHostingView() {
-        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling)
+        hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling, isAssistantOpen: isAssistantOpen)
     }
 
     // MARK: - Resizing (one grip in the bottom-right corner; the top-left corner stays put)
@@ -293,11 +312,11 @@ class PluckkPanel: NSPanel {
     func resize(width: CGFloat, height: CGFloat) {
         guard isExpanded else { return }
         if isFilling { isFilling = false; updateHostingView() }   // dragging the grip leaves fill
-        let newWidth = clampWidth(width)
+        let newWidth = clampWidth(width - assistantRoom)
         let newHeight = clampHeight(height)
         var f = frame
         f.origin.y = f.maxY - newHeight
-        f.size = NSSize(width: newWidth, height: newHeight)
+        f.size = NSSize(width: newWidth + assistantRoom, height: newHeight)
         expandedWidth = newWidth
         expandedHeight = newHeight
         setFrame(f, display: true)

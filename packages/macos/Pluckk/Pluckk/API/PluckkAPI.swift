@@ -211,10 +211,11 @@ class PluckkAPI {
     // MARK: - Manual cards
 
     /// A card written by hand (no AI): a plain Q&A spec into a deck (nil = unfiled). Returns its id.
-    func createManualCard(token: String, question: String, answer: String, folderId: String?, tags: [String]) async throws -> String {
+    func createManualCard(token: String, question: String, answer: String, folderId: String?, tags: [String],
+                          provenance: [String: String] = ["identifier": "app:pluckk/manual", "title": "Written by hand", "containerTitle": "Pluckk"]) async throws -> String {
         let body: [String: Any] = [
             "spec": ["style": "qa", "question": question, "answer": answer],
-            "provenance": ["identifier": "app:pluckk/manual", "title": "Written by hand", "containerTitle": "Pluckk"],
+            "provenance": provenance,
             "folder_id": folderId.map { $0 as Any } ?? NSNull(),
             "tags": tags,
         ]
@@ -349,6 +350,12 @@ class PluckkAPI {
     }
 
     // MARK: - Transport
+
+    /// A plain API call, for the assistant's tools.
+    func raw(token: String, method: String, path: String, json: [String: Any]?) async throws -> Data {
+        if let json { return try await send(token: token, method: method, path: path, json: json) }
+        return try await send(token: token, method: method, path: path)
+    }
 
     private func send(token: String, method: String, path: String, json: [String: Any]) async throws -> Data {
         try await send(token: token, method: method, path: path, body: JSONSerialization.data(withJSONObject: json))

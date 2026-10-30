@@ -6,6 +6,7 @@ struct SidebarView: View {
     var panelWidth: CGFloat = 600
     var isPinned: Bool = false
     var isFilling: Bool = false
+    var isAssistantOpen: Bool = false
     @ObservedObject private var appState = AppState.shared
     @Environment(\.colorScheme) var colorScheme
 
@@ -49,7 +50,7 @@ struct SidebarView: View {
             backgroundColor.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                GripBar(isPinned: isPinned, isFilling: isFilling)
+                GripBar(isPinned: isPinned, isFilling: isFilling, isAssistantOpen: isAssistantOpen)
                     .zIndex(1)  // hover labels draw over the content below
 
                 HStack(spacing: 0) {
@@ -90,6 +91,11 @@ struct SidebarView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if isAssistantOpen {
+                        Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+                        AssistantView().frame(width: PluckkPanel.assistantWidth - 1)
+                    }
                 }
             }
 
@@ -108,6 +114,8 @@ struct SidebarView: View {
 struct GripBar: View {
     let isPinned: Bool
     let isFilling: Bool
+    let isAssistantOpen: Bool
+    @State private var assistantHovering = false
     @State private var closeHovering = false
     @State private var pinHovering = false
 
@@ -137,6 +145,16 @@ struct GripBar: View {
                 }
                 .onHover { closeHovering = $0 }
                 Spacer()
+                Button(action: { PluckkPanel.shared?.toggleAssistant() }) {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(isAssistantOpen ? PluckkTheme.accent : Color.primary.opacity(assistantHovering ? 0.7 : 0.4))
+                        .frame(width: 22, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { assistantHovering = $0 }
+                .help(isAssistantOpen ? "Close the assistant" : "Open the assistant")
                 Button(action: { PluckkPanel.shared?.togglePinned() }) {
                     Image(systemName: isPinned ? "pin.fill" : "pin")
                         .font(.system(size: 10, weight: .semibold))

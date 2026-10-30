@@ -20,6 +20,10 @@ struct SettingsView: View {
 
                 Divider()
 
+                AssistantSettingsSection()
+
+                Divider()
+
                 // Account Section
                 accountSection
 

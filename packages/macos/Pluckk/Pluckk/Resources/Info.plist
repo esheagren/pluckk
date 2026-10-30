@@ -39,6 +39,11 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Pluckk needs accessibility permission to capture text selections from any application and detect the double-tap Command shortcut.</string>
 	<key>NSAppleEventsUsageDescription</key>

@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		028 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* AssistantView.swift */; };
+		027 /* AssistantEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129 /* AssistantEngine.swift */; };
+		026 /* AssistantCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128 /* AssistantCore.swift */; };
 		025 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127 /* TerminalPanelView.swift */; };
 		700B /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 700A /* SwiftTerm */; };
 		024 /* NewCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126 /* NewCardView.swift */; };
@@ -36,6 +39,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		130 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
+		129 /* AssistantEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEngine.swift; sourceTree = "<group>"; };
+		128 /* AssistantCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCore.swift; sourceTree = "<group>"; };
 		127 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
 		126 /* NewCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewCardView.swift; sourceTree = "<group>"; };
 		125 /* ActivityGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityGrid.swift; sourceTree = "<group>"; };
@@ -165,6 +171,9 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				130 /* AssistantView.swift */,
+				129 /* AssistantEngine.swift */,
+				128 /* AssistantCore.swift */,
 				127 /* TerminalPanelView.swift */,
 				126 /* NewCardView.swift */,
 				125 /* ActivityGrid.swift */,
@@ -273,6 +282,9 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				028 /* AssistantView.swift in Sources */,
+				027 /* AssistantEngine.swift in Sources */,
+				026 /* AssistantCore.swift in Sources */,
 				025 /* TerminalPanelView.swift in Sources */,
 				024 /* NewCardView.swift in Sources */,
 				023 /* ActivityGrid.swift in Sources */,

@@ -104,6 +104,27 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    // MARK: Changes made elsewhere (the assistant), so the queue doesn't show stale cards
+
+    func applyExternalEdit(cardId: String, question: String?, answer: String?) {
+        for i in queue.indices where queue[i].card_id == cardId {
+            if let question { queue[i].question = question }
+            if let answer { queue[i].answer = answer }
+        }
+    }
+
+    func applyExternalTags(cardId: String, tags: [String]) {
+        for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
+    }
+
+    func removeCardExternally(_ cardId: String) {
+        guard index <= queue.count else { return }
+        let wasCurrent = current?.card_id == cardId
+        queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != cardId }
+        if wasCurrent { advance() }
+        refreshTodayCounts()
+    }
+
     /// The deck being practised on its own, or nil for the usual mix of all decks.
     @Published private(set) var focusDeck: DeckSummary?
 
@@ -150,7 +171,8 @@ final class PracticeSession: ObservableObject {
 
     /// Practice's keys (Space reveal, 1–4 rate, ← / Z back) handled before the rest of the app,
     /// so they still work after text on the card has been selected: a selectable text view
-    /// takes keyboard focus and would otherwise swallow them. Skipped while typing in an editor,
+    /// takes keyboard focus and would otherwise swallow them. Button shortcuts wouldn't do: they'd
+    /// also fire while typing in the assistant. Skipped while typing in an editor,
     /// during the "Good job" moment, and when Practice isn't on screen. Acting clears the
     /// selection.
     func installKeyMonitor() {
@@ -481,14 +503,7 @@ struct PracticeView: View {
                 .foregroundColor(mutedText)
                 .opacity(session.canUndo ? 1 : 0)
                 .disabled(!session.canUndo)
-                .keyboardShortcut("z", modifiers: [])
                 .help("Back (← or Z)")
-                // ← also goes back (a second, invisible button carries the second shortcut).
-                Button("") { session.undo() }
-                    .keyboardShortcut(.leftArrow, modifiers: [])
-                    .disabled(!session.canUndo)
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
             }
         }
         .padding(.horizontal, 22)
@@ -657,7 +672,6 @@ struct PracticeView: View {
                 ForEach(ReviewRating.allCases, id: \.self) { rating in
                     RatingButton(rating: rating, interval: item.previews.label(for: rating)) { session.rate(rating) }
                         .disabled(session.busy)
-                        .keyboardShortcut(KeyEquivalent(rating.key), modifiers: [])
                 }
             }
         } else {
@@ -668,7 +682,6 @@ struct PracticeView: View {
                 }
             }
             .buttonStyle(QuietButtonStyle())
-            .keyboardShortcut(.space, modifiers: [])
             .frame(maxWidth: .infinity)
         }
     }
