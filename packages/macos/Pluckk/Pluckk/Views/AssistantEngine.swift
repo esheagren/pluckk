@@ -456,7 +456,9 @@ final class AssistantSession: ObservableObject {
     }
 
     private func execute(_ call: ToolCall) async -> ToolResult {
-        guard let data = call.argumentsJSON.data(using: .utf8),
+        // Claude sends nothing at all for a tool with no inputs.
+        let json = call.argumentsJSON.isEmpty ? "{}" : call.argumentsJSON
+        guard let data = json.data(using: .utf8),
               let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return ToolResult(callId: call.id, content: "INVALID_JSON: the tool input was incomplete. Try again.", isError: true)
         }
