@@ -1,17 +1,33 @@
 import SwiftUI
 
-/// How new cards reach you: one daily total, shared out between decks. The ring shows each
-/// deck's share, and each row shows how long the deck will last at its limit. Limits save as
-/// they change. More statistics over time can sit alongside this.
+/// How new cards reach you: one daily total, shared out around a ring. Each deck sits beside its
+/// slice, and the handles between slices drag cards from one deck to its neighbour, keeping the
+/// total. Limits save as they change. More statistics over time can sit alongside this.
 struct StatisticsView: View {
     @State private var decks: [DeckSummary] = []
     @State private var limits: [String: Int] = [:]      // by deck id
     @State private var dirty: Set<String> = []
     @State private var saveTask: Task<Void, Never>?
     @State private var notice: String?
-    @Environment(\.colorScheme) private var colorScheme
+    /// Where the first slice starts, as a fraction of the ring (the handle there moves too).
+    @State private var origin = 0.0
+    @State private var drag: HandleDrag?
+    @State private var hoveredHandle: Int?
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
+    private static let ringWidth: CGFloat = 22
+    private static let labelHeight: CGFloat = 58
+
+    /// A handle being dragged. It's tracked as movement since the last event, so the pointer
+    /// crossing the far side of the ring can't make the slices jump.
+    private struct HandleDrag {
+        let index: Int
+        let before: Int         // the deck's limit at the start, either side of the handle
+        let after: Int
+        let origin: Double
+        var lastFraction: Double
+        var moved = 0.0
+    }
 
     /// Decks with new cards to give. Paused decks are left out of the mix, so out of the share too.
     private var active: [DeckSummary] { decks.filter { !$0.is_paused && $0.new > 0 } }
@@ -24,93 +40,195 @@ struct StatisticsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("New cards").font(.headline)
-                HStack(spacing: 8) {
-                    Text("I'll take on")
-                    numberField(Binding(get: { total }, set: setTotal))
-                    Text("new cards a day")
-                }
-                .font(.system(size: 13))
+        GeometryReader { outer in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text("I'll take on")
+                        TextField("", value: Binding(get: { total }, set: setTotal), format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 54)
+                        Text("new cards a day")
+                        Spacer()
+                        if decks.contains(where: \.is_paused) {
+                            Text("Paused decks aren't shown").font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    .font(.system(size: 13))
 
-                ring.frame(maxWidth: .infinity)
+                    GeometryReader { geo in ringWithDecks(in: geo.size) }
+                        .frame(height: max(440, outer.size.height - 110))
 
-                VStack(spacing: 6) {
-                    ForEach(active) { row($0) }
+                    Text(notice ?? "Drag a handle on the ring to move cards between neighbouring decks, or type a number.")
+                        .font(.system(size: 11))
+                        .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
+                        .frame(maxWidth: .infinity)
                 }
-
-                if let notice {
-                    Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
-                }
-                if decks.contains(where: \.is_paused) {
-                    Text("Paused decks aren't shown.").font(.caption).foregroundColor(.secondary)
-                }
+                .padding(20)
             }
-            .padding(20)
+            .scrollIndicators(.hidden)
         }
-        .scrollIndicators(.hidden)
         .task { await load() }
     }
 
-    private var ring: some View {
-        ZStack {
-            Circle().stroke(Color.primary.opacity(0.06), lineWidth: 26)
-            ForEach(slices, id: \.deck.id) { slice in
-                Circle()
-                    .trim(from: slice.start, to: slice.end)
-                    .stroke(color(slice.deck), style: StrokeStyle(lineWidth: 26))
-                    .rotationEffect(.degrees(-90))
+    // MARK: The ring
+
+    private struct Slice {
+        let deck: DeckSummary
+        let start: Double
+        let end: Double
+        var middle: Double { (start + end) / 2 }
+    }
+
+    private var slices: [Slice] {
+        guard !active.isEmpty else { return [] }
+        var position = origin
+        return active.map { deck in
+            let share = total > 0 ? Double(limit(deck)) / Double(total) : 1 / Double(active.count)
+            defer { position += share }
+            return Slice(deck: deck, start: position, end: position + share)
+        }
+    }
+
+    private func point(_ fraction: Double, _ radius: CGFloat, around center: CGPoint) -> CGPoint {
+        let angle = (fraction - 0.25) * 2 * .pi
+        return CGPoint(x: center.x + radius * CGFloat(cos(angle)), y: center.y + radius * CGFloat(sin(angle)))
+    }
+
+    private func ringWithDecks(in size: CGSize) -> some View {
+        let labelWidth = max(96, min(200, size.width * 0.24))
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let radius = max(70, min((size.width - 2 * (labelWidth + 44)) / 2, (size.height - 40) / 2, 170))
+        let current = slices
+        let placed = placeLabels(current, center: center, radius: radius, height: size.height)
+
+        return ZStack {
+            // Leaders first, so the ring and labels sit over them.
+            ForEach(placed, id: \.slice.deck.id) { label in
+                Path { path in
+                    path.move(to: point(label.slice.middle, radius + Self.ringWidth / 2 + 3, around: center))
+                    path.addLine(to: CGPoint(x: center.x + (label.onRight ? 1 : -1) * (radius + 36), y: label.y))
+                }
+                .stroke(color(label.slice.deck).opacity(0.45), lineWidth: 1)
+            }
+            ForEach(current, id: \.deck.id) { slice in
+                RingArc(start: slice.start, end: slice.end)
+                    .stroke(color(slice.deck), lineWidth: Self.ringWidth)
+                    .frame(width: radius * 2, height: radius * 2)
+                    .position(center)
             }
             VStack(spacing: 0) {
-                Text("\(total)").font(.system(size: 28, weight: .semibold).monospacedDigit())
-                Text("a day").font(.system(size: 11)).foregroundColor(.secondary)
+                Text("\(total)").font(.system(size: 34, weight: .semibold).monospacedDigit())
+                Text("new a day").font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            .position(center)
+            ForEach(placed, id: \.slice.deck.id) { label in
+                deckLabel(label.slice, onRight: label.onRight)
+                    .frame(width: labelWidth, height: Self.labelHeight, alignment: label.onRight ? .leading : .trailing)
+                    .position(x: center.x + (label.onRight ? 1 : -1) * (radius + 42 + labelWidth / 2), y: label.y)
+                    .animation(.easeOut(duration: 0.15), value: label.y)
+            }
+            if current.count > 1 && total > 0 {
+                ForEach(current.indices, id: \.self) { index in
+                    handle(index, slices: current, radius: radius, center: center)
+                }
             }
         }
-        .frame(width: 170, height: 170)
-        .padding(13)
-        .animation(.easeOut(duration: 0.2), value: limits)
+        .coordinateSpace(name: "ring")
     }
 
-    private var slices: [(deck: DeckSummary, start: Double, end: Double)] {
-        guard total > 0 else { return [] }
-        var position = 0.0
-        return active.map { deck in
-            let start = position
-            position += Double(limit(deck)) / Double(total)
-            return (deck, start, position)
+    private struct PlacedLabel {
+        let slice: Slice
+        let onRight: Bool
+        let y: CGFloat
+    }
+
+    /// Each label beside its slice, then nudged apart down each side so small slices stay readable.
+    private func placeLabels(_ slices: [Slice], center: CGPoint, radius: CGFloat, height: CGFloat) -> [PlacedLabel] {
+        var placed: [PlacedLabel] = []
+        for side in [true, false] {
+            let members = slices
+                .map { (slice: $0, y: point($0.middle, radius + 20, around: center).y, x: point($0.middle, 1, around: center).x) }
+                .filter { ($0.x >= center.x) == side }
+                .sorted { $0.y < $1.y }
+            var ys = members.map(\.y)
+            let gap = Self.labelHeight + 4
+            for i in ys.indices { ys[i] = max(ys[i], i == 0 ? Self.labelHeight / 2 : ys[i - 1] + gap) }
+            for i in ys.indices.reversed() {
+                ys[i] = min(ys[i], i == ys.count - 1 ? height - Self.labelHeight / 2 : ys[i + 1] - gap)
+            }
+            for (member, y) in zip(members, ys) { placed.append(PlacedLabel(slice: member.slice, onRight: side, y: y)) }
+        }
+        return placed
+    }
+
+    private func deckLabel(_ slice: Slice, onRight: Bool) -> some View {
+        let deck = slice.deck
+        let edge: HorizontalAlignment = onRight ? .leading : .trailing
+        let share = total > 0 ? Int((Double(limit(deck)) / Double(total) * 100).rounded()) : 0
+        return VStack(alignment: edge, spacing: 2) {
+            Text(deck.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color(deck))
+                .lineLimit(1)
+            HStack(spacing: 3) {
+                TextField("", value: Binding(get: { limit(deck) }, set: { setLimit(deck, $0) }), format: .number)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                    .multilineTextAlignment(onRight ? .leading : .trailing)
+                    .fixedSize()
+                Text("a day · \(share)%")
+            }
+            .font(.system(size: 12).monospacedDigit())
+            Text("\(deck.new.formatted()) left · \(finishEstimate(deck))")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
     }
 
-    private func row(_ deck: DeckSummary) -> some View {
-        HStack(spacing: 10) {
-            Circle().fill(color(deck)).frame(width: 9, height: 9)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(deck.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text("\(deck.new) left · \(finishEstimate(deck))")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundColor(.secondary)
+    private func handle(_ index: Int, slices: [Slice], radius: CGFloat, center: CGPoint) -> some View {
+        let active = drag?.index == index || hoveredHandle == index
+        return Circle()
+            .fill(Color.white)
+            .frame(width: active ? 16 : 11, height: active ? 16 : 11)
+            .shadow(color: .black.opacity(0.5), radius: 2)
+            .frame(width: 30, height: 30)
+            .contentShape(Circle())
+            .onHover { inside in
+                hoveredHandle = inside ? index : (hoveredHandle == index ? nil : hoveredHandle)
+                if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
             }
-            Spacer(minLength: 8)
-            if total > 0 {
-                Text("\(Int((Double(limit(deck)) / Double(total) * 100).rounded()))%")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
-            numberField(Binding(get: { limit(deck) }, set: { setLimit(deck, $0) }))
-            Stepper("", value: Binding(get: { limit(deck) }, set: { setLimit(deck, $0) }), in: 0...500, step: 5)
-                .labelsHidden()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("ring"))
+                    .onChanged { dragHandle(index, value: $0, slices: slices, center: center) }
+                    .onEnded { _ in drag = nil }
+            )
+            .animation(.easeOut(duration: 0.1), value: active)
+            .position(point(slices[index].start, radius, around: center))   // last: it fills the ring
     }
 
-    private func numberField(_ value: Binding<Int>) -> some View {
-        TextField("", value: value, format: .number)
-            .textFieldStyle(.roundedBorder)
-            .multilineTextAlignment(.center)
-            .frame(width: 50)
+    private func dragHandle(_ index: Int, value: DragGesture.Value, slices: [Slice], center: CGPoint) {
+        let before = slices[(index + slices.count - 1) % slices.count].deck
+        let after = slices[index].deck
+        let fraction = { (p: CGPoint) in Double(atan2(p.y - center.y, p.x - center.x)) / (2 * .pi) + 0.25 }
+        var current = drag ?? HandleDrag(index: index, before: limit(before), after: limit(after), origin: origin,
+                                         lastFraction: fraction(value.startLocation))
+        let here = fraction(value.location)
+        var step = (here - current.lastFraction).truncatingRemainder(dividingBy: 1)
+        if step > 0.5 { step -= 1 } else if step < -0.5 { step += 1 }
+        current.moved += step
+        current.lastFraction = here
+        drag = current
+
+        let pair = current.before + current.after
+        let moved = Int((current.moved * Double(total)).rounded())
+        let next = min(max(current.before + moved, max(0, pair - 500)), min(pair, 500))
+        let shift = Double(next - current.before) / Double(max(total, 1))
+        setLimit(before, next)
+        setLimit(after, pair - next)
+        if index == 0 { origin = current.origin + shift }
     }
 
     /// At this deck's limit, how long until its new cards run out.
@@ -194,5 +312,19 @@ struct StatisticsView: View {
         } catch {
             notice = "Couldn't load your decks: \(error.localizedDescription)"
         }
+    }
+}
+
+/// One slice, a little short at each end so neighbours read as separate.
+private struct RingArc: Shape {
+    let start: Double
+    let end: Double
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let gap = min(0.003, (end - start) / 4)
+        path.addArc(center: CGPoint(x: rect.midX, y: rect.midY), radius: min(rect.width, rect.height) / 2,
+                    startAngle: .degrees((start + gap) * 360 - 90), endAngle: .degrees((end - gap) * 360 - 90), clockwise: false)
+        return path
     }
 }
