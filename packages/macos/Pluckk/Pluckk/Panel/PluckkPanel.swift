@@ -13,17 +13,21 @@ class PluckkPanel: NSPanel {
     private let collapsedWidth: CGFloat = 64
     private let collapsedHeight: CGFloat = 6
     private let minExpandedWidth: CGFloat = 440
-    private let maxExpandedWidth: CGFloat = 1400
+    private let maxExpandedWidth: CGFloat = 6000
     private let minExpandedHeight: CGFloat = 280
-    private let maxExpandedHeight: CGFloat = 900
+    private let maxExpandedHeight: CGFloat = 4000
     private let bottomMargin: CGFloat = 8
     private let cursorGap: CGFloat = 16
     private(set) var expandedWidth: CGFloat = 600
     private(set) var expandedHeight: CGFloat = 400
 
     private(set) var isExpanded = false
-    /// Green button: the card fills the screen (menu bar and Dock stay); toggles back.
+    /// Green button: the card is in full screen (see toggleFill).
     private(set) var isFilling = false
+    private var fullScreenWindow: NSWindow?
+    private var collapseAfterFullScreen: Bool?
+    /// The window holding the card right now.
+    var hostWindow: NSWindow { fullScreenWindow ?? self }
     /// The assistant panel on the card's right. The window grows to make room, so the card itself
     /// keeps its size.
     private(set) var isAssistantOpen = UserDefaults.standard.bool(forKey: "assistantOpen")
@@ -179,10 +183,10 @@ class PluckkPanel: NSPanel {
     }
 
     @objc private func screenParametersChanged() {
+        if isFilling { return }
         if isExpanded {
             let centre = NSPoint(x: frame.midX, y: frame.midY)
-            let screen = screen(containing: centre) ?? NSScreen.main
-            setFrame(isFilling ? (screen?.visibleFrame ?? frame) : clamped(frame, to: screen), display: true)
+            setFrame(clamped(frame, to: screen(containing: centre) ?? NSScreen.main), display: true)
         } else {
             setFrame(collapsedFrame(on: screenUnderMouse()), display: true)
         }
@@ -253,29 +257,64 @@ class PluckkPanel: NSPanel {
         updateHostingView()
     }
 
-    /// Green button: fill the screen the card is on, or go back to the size it had before.
+    /// Green button: real full screen, in its own Space, so swiping between apps reaches it. A
+    /// floating non-activating panel can't do that, so the card moves into an ordinary window
+    /// for as long as it lasts and comes back when full screen ends, however it ends.
     func toggleFill() {
         guard isExpanded else { return }
-        let target: NSRect
-        if isFilling, let before = frameBeforeFill {
-            target = before
-            isFilling = false
-        } else {
-            frameBeforeFill = frame
-            let centre = NSPoint(x: frame.midX, y: frame.midY)
-            target = (screen(containing: centre) ?? NSScreen.main)?.visibleFrame ?? frame
-            isFilling = true
+        if let fullScreenWindow {
+            fullScreenWindow.toggleFullScreen(nil)
+            return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            self.animator().setFrame(target, display: true)
+        frameBeforeFill = frame
+        let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = backgroundColor
+        window.collectionBehavior = [.fullScreenPrimary, .managed]
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(button)?.isHidden = true
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(fullScreenEnded),
+                                               name: NSWindow.didExitFullScreenNotification, object: window)
+        contentView = NSView()
+        window.contentView = hostingView
+        fullScreenWindow = window
+        isFilling = true
+        orderOut(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.toggleFullScreen(nil)
         updateHostingView()
+    }
+
+    @objc private func fullScreenEnded() {
+        guard let window = fullScreenWindow else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didExitFullScreenNotification, object: window)
+        fullScreenWindow = nil
+        isFilling = false
+        window.contentView = NSView()
+        contentView = hostingView
+        window.orderOut(nil)
+        if let frameBeforeFill { setFrame(frameBeforeFill, display: true) }
+        orderFrontRegardless()
+        makeKey()
+        updateHostingView()
+        if let reset = collapseAfterFullScreen {
+            collapseAfterFullScreen = nil
+            collapse(resetState: reset)
+        }
     }
 
     private func collapse(resetState: Bool) {
         guard isExpanded else { return }
+        if let fullScreenWindow {
+            collapseAfterFullScreen = resetState
+            fullScreenWindow.toggleFullScreen(nil)
+            return
+        }
         isExpanded = false
         isFilling = false
         applySpaceBehavior()
@@ -311,18 +350,23 @@ class PluckkPanel: NSPanel {
         hostingView?.rootView = SidebarView(isExpanded: isExpanded, panelWidth: expandedWidth, isPinned: isPinned, isFilling: isFilling, isAssistantOpen: isAssistantOpen)
     }
 
-    // MARK: - Resizing (one grip in the bottom-right corner; the top-left corner stays put)
+    // MARK: - Resizing (from any edge or corner; the opposite side stays put)
 
-    func resize(width: CGFloat, height: CGFloat) {
-        guard isExpanded else { return }
-        if isFilling { isFilling = false; updateHostingView() }   // dragging the grip leaves fill
-        let newWidth = clampWidth(width - assistantRoom)
-        let newHeight = clampHeight(height)
-        var f = frame
-        f.origin.y = f.maxY - newHeight
-        f.size = NSSize(width: newWidth + assistantRoom, height: newHeight)
-        expandedWidth = newWidth
-        expandedHeight = newHeight
+    func resize(from start: NSRect, edges: ResizeEdges, dx: CGFloat, dy: CGFloat) {
+        guard isExpanded, !isFilling else { return }
+        var f = start
+        if edges.contains(.right) { f.size.width = clampWidth(start.width + dx - assistantRoom) + assistantRoom }
+        if edges.contains(.left) {
+            f.size.width = clampWidth(start.width - dx - assistantRoom) + assistantRoom
+            f.origin.x = start.maxX - f.width
+        }
+        if edges.contains(.top) { f.size.height = clampHeight(start.height + dy) }
+        if edges.contains(.bottom) {
+            f.size.height = clampHeight(start.height - dy)
+            f.origin.y = start.maxY - f.height
+        }
+        expandedWidth = f.width - assistantRoom
+        expandedHeight = f.height
         setFrame(f, display: true)
         saveSize()
         updateHostingView()

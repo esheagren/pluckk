@@ -71,16 +71,14 @@ final class SessionTimer: ObservableObject {
     }
 }
 
-/// The top bar's centre: the clock and today's counts. Clicking the clock opens a row of minute
+/// The top bar's centre: one strip holding the clock and today's counts. While a sprint runs the
+/// strip itself fills from the left, so the time is shown once. Clicking it opens a row of minute
 /// choices inline (a popover misbehaves on this non-activating panel). Sprints start themselves
 /// when a card is revealed, so the click changes the time; the row also has Start or Stop.
-/// A running sprint grows the clock (larger type and ring, a springy pop) so the minutes are
-/// the focus.
 struct SessionTimerView: View {
     @ObservedObject private var timer = SessionTimer.shared
     @AppStorage(SessionTimer.minutesKey) private var storedMinutes = SessionTimer.defaultMinutes
     @State private var hovering = false
-    @State private var pop = false
     @State private var picking = false
 
     private static let presets = [2, 4, 8, 15, 30]
@@ -88,58 +86,46 @@ struct SessionTimerView: View {
     private var choices: [Int] { Array(Set(Self.presets + [minutes])).sorted() }
 
     var body: some View {
-        HStack(spacing: 10) {
-            clockButton
+        HStack(spacing: 8) {
+            strip
             if picking {
                 minutePicker
                     .transition(.opacity.combined(with: .move(edge: .leading)))
-            } else {
-                TodayCountsLabel()
             }
         }
         .animation(.easeOut(duration: 0.15), value: picking)
     }
 
-    private var clockButton: some View {
+    private var strip: some View {
         let running = timer.isRunning
         return Button(action: { picking.toggle() }) {
-            HStack(spacing: running ? 8 : 5) {
-                if running {
-                    ZStack {
-                        Circle().stroke(Color.primary.opacity(0.15), lineWidth: 2)
-                        Circle()
-                            .trim(from: 0, to: timer.progress)
-                            .stroke(PluckkTheme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .animation(.linear(duration: 1), value: timer.progress)
-                    }
-                    .frame(width: 15, height: 15)
-                    Text(clock(timer.remaining))
-                } else {
-                    Image(systemName: "timer").font(.system(size: 10, weight: .medium))
-                    Text(clock(Double(minutes * 60)))
-                }
+            HStack(spacing: 9) {
+                Text(clock(running ? timer.remaining : Double(minutes * 60)))
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .foregroundColor(running ? PluckkTheme.accent : Color.primary.opacity(hovering || picking ? 0.85 : 0.6))
+                if !picking { TodayCountsLabel() }
             }
-            .font(.system(size: running ? 16 : 12, weight: .semibold).monospacedDigit())
-            .foregroundColor(running ? PluckkTheme.accent : Color.primary.opacity(hovering || picking ? 0.85 : 0.55))
-            .padding(.horizontal, running ? 14 : 10)
-            .padding(.vertical, running ? 5 : 4)
-            .background(Capsule().fill(running ? PluckkTheme.accent.opacity(0.14) : Color.primary.opacity(hovering || picking ? 0.08 : 0)))
+            .padding(.horizontal, 14)
+            .frame(height: 26)
+            .background(fill)
+            .clipShape(Capsule())
             .contentShape(Capsule())
-            .scaleEffect(pop ? 1.12 : 1)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: running)
-        .onChange(of: running) { isOn in
-            guard isOn else { return }
-            // A brief pop on start, settling to the larger running size.
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { pop = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { pop = false }
+        .help(running ? "Change the time, or stop" : "Change the minutes")
+    }
+
+    private var fill: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Color.primary.opacity(hovering || picking ? 0.09 : 0.055)
+                Rectangle()
+                    .fill(PluckkTheme.accent.opacity(0.24))
+                    .frame(width: geo.size.width * timer.progress)
+                    .animation(.linear(duration: 1), value: timer.progress)
             }
         }
-        .help(running ? "Change the time, or stop" : "Change the minutes")
     }
 
     private var minutePicker: some View {

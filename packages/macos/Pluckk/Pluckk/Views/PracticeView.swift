@@ -3,6 +3,19 @@ import AppKit
 
 // MARK: - Session
 
+/// ⌘+ and ⌘- on the card's text.
+enum CardTextScale {
+    static let key = "cardTextScale"
+
+    static func step(_ delta: Double) {
+        let current = UserDefaults.standard.double(forKey: key)
+        let next = ((current > 0 ? current : 1) + delta) * 10
+        UserDefaults.standard.set(min(max(next.rounded() / 10, 0.7), 2.5), forKey: key)
+    }
+
+    static func reset() { UserDefaults.standard.set(1.0, forKey: key) }
+}
+
 /// What saving the card editor does to the card's image.
 enum CardImageChange {
     case keep, remove
@@ -185,19 +198,31 @@ final class PracticeSession: ObservableObject {
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // ⌘+ / ⌘- / ⌘0: the size of the card's text.
+            if let panel = PluckkPanel.shared, event.window === panel.hostWindow, AppState.shared.currentView == .practice {
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
+                if mods == .command || mods == [.command, .shift] {
+                    switch event.keyCode {
+                    case 24, 69: CardTextScale.step(0.1); return nil
+                    case 27, 78: CardTextScale.step(-0.1); return nil
+                    case 29: CardTextScale.reset(); return nil
+                    default: break
+                    }
+                }
+            }
             // Backspace goes straight to the field being edited, so nothing on the way can lose it.
             if self?.editing == true, event.keyCode == 51,
                event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
-               let tv = PluckkPanel.shared?.firstResponder as? NSTextView, tv.isEditable {
+               let tv = PluckkPanel.shared?.hostWindow.firstResponder as? NSTextView, tv.isEditable {
                 tv.deleteBackward(nil)
                 return nil
             }
             guard let self, AppState.shared.currentView == .practice,
-                  let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel,
+                  let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel.hostWindow,
                   !self.editing, !self.timesUp, case .reviewing = self.phase else { return event }
             // The assistant's box is the only editor left on this screen. While it's blank the
             // keys still belong to the card, so Space and 1–5 carry on after asking something.
-            if let tv = panel.firstResponder as? NSTextView, tv.isEditable {
+            if let tv = panel.hostWindow.firstResponder as? NSTextView, tv.isEditable {
                 let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 guard blank, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
             }
@@ -218,16 +243,16 @@ final class PracticeSession: ObservableObject {
                 handled = false
             }
             guard handled else { return event }
-            panel.makeFirstResponder(nil)               // drop any text selection
+            panel.hostWindow.makeFirstResponder(nil)    // drop any text selection
             return nil
         }
         // Clicking the card takes the keys back from the assistant's box.
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             if let self, AppState.shared.currentView == .practice, !self.editing,
-               let panel = PluckkPanel.shared, event.window === panel, panel.isAssistantOpen,
-               event.locationInWindow.x < panel.frame.width - PluckkPanel.assistantWidth,
-               let tv = panel.firstResponder as? NSTextView, tv.isEditable {
-                panel.makeFirstResponder(nil)
+               let panel = PluckkPanel.shared, event.window === panel.hostWindow, panel.isAssistantOpen,
+               event.locationInWindow.x < panel.hostWindow.frame.width - PluckkPanel.assistantWidth,
+               let tv = panel.hostWindow.firstResponder as? NSTextView, tv.isEditable {
+                panel.hostWindow.makeFirstResponder(nil)
             }
             return event
         }
@@ -432,6 +457,7 @@ struct PracticeView: View {
     @State private var zoomed: URL?
     @State private var editQuestion = ""
     @State private var editAnswer = ""
+    @AppStorage(CardTextScale.key) private var textScale = 1.0
     @State private var editImage: NSImage?          // a new image, saved with the card
     @State private var editImageRemoved = false
     @State private var confirmingDelete = false
@@ -468,7 +494,6 @@ struct PracticeView: View {
             }
             }
         }
-        .overlay(alignment: .top) { SprintBar() }
         .overlay { if let zoomed { lightbox(zoomed) } }
         .onAppear {
             session.installKeyMonitor()
@@ -591,7 +616,7 @@ struct PracticeView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard !session.editing else { return }
-            PluckkPanel.shared?.makeFirstResponder(nil)   // a click on the card clears a selection
+            PluckkPanel.shared?.hostWindow.makeFirstResponder(nil)   // a click on the card clears a selection
             session.reveal()
         }
         .id(item.id)
@@ -848,10 +873,8 @@ struct PracticeView: View {
     /// Type that fits its content: short prompts large, long ones step down (as in the web app).
     private func fittedSize(_ text: String) -> CGFloat {
         let n = text.trimmingCharacters(in: .whitespacesAndNewlines).count
-        if n <= 60 { return 22 }
-        if n <= 140 { return 19 }
-        if n <= 320 { return 16 }
-        return 14
+        let base: CGFloat = n <= 60 ? 22 : n <= 140 ? 19 : n <= 320 ? 16 : 14
+        return base * CGFloat(textScale > 0 ? textScale : 1)
     }
 }
 
@@ -891,28 +914,6 @@ struct SprintCelebration: View {
         guard !finished else { return }
         finished = true
         withAnimation(.easeInOut(duration: 0.4)) { onDone() }
-    }
-}
-
-/// Practice shows time, never how many cards are left: while a sprint runs, a thin bar along
-/// the top fills with the minutes used. No sprint, no bar; the point is to start, not to finish.
-struct SprintBar: View {
-    @ObservedObject private var timer = SessionTimer.shared
-
-    var body: some View {
-        if timer.isRunning {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(Color.primary.opacity(0.06))
-                    Rectangle()
-                        .fill(PluckkTheme.accent.opacity(0.85))
-                        .frame(width: geo.size.width * timer.progress)
-                        .animation(.linear(duration: 1), value: timer.progress)
-                }
-            }
-            .frame(height: 3)
-            .transition(.opacity)
-        }
     }
 }
 
