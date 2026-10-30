@@ -16,6 +16,13 @@ enum CardTextScale {
     static func reset() { UserDefaults.standard.set(1.0, forKey: key) }
 }
 
+/// A new card started from the Practice editor, to split the one being edited.
+struct SplitCard: Identifiable {
+    let id = UUID()
+    var question = ""
+    var answer = ""
+}
+
 /// What saving the card editor does to the card's image.
 enum CardImageChange {
     case keep, remove
@@ -351,13 +358,20 @@ final class PracticeSession: ObservableObject {
 
     func cancelEdit() { editing = false }
 
-    func saveEdit(question: String, answer: String, image: CardImageChange) {
+    func saveEdit(question: String, answer: String, image: CardImageChange, newCards: [SplitCard] = [],
+                  onCreated: @escaping (SplitCard) -> Void = { _ in }) {
         guard let item = current, editing, !busy, let token = AuthManager.shared.accessToken else { return }
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !a.isEmpty else { notice = "Question and answer can't be empty."; return }
+        let trim = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let filled = newCards.filter { !trim($0.question).isEmpty || !trim($0.answer).isEmpty }
+        guard filled.allSatisfy({ !trim($0.question).isEmpty && !trim($0.answer).isEmpty }) else {
+            notice = "Each new card needs a question and an answer."
+            return
+        }
         let textChanged = q != item.question || a != item.answer
-        if !textChanged, case .keep = image { editing = false; return }
+        if !textChanged, filled.isEmpty, case .keep = image { editing = false; return }
         busy = true
         notice = nil
         Task {
@@ -371,6 +385,15 @@ final class PracticeSession: ObservableObject {
                     }
                 }
                 try await saveImage(image, for: item, token: token)
+                // Same deck and tags as the card it came from. Each is ticked off as it's made,
+                // so a retry after a failure doesn't repeat it.
+                let tags = (item.tags ?? []).filter { $0 != Rework.tag && $0 != ImageSide.questionTag }
+                for split in filled {
+                    _ = try await PluckkAPI.shared.createManualCard(token: token, question: trim(split.question), answer: trim(split.answer),
+                                                                    folderId: item.folder?.id, tags: tags)
+                    onCreated(split)
+                }
+                if !filled.isEmpty { refreshTodayCounts() }
                 editing = false
             } catch {
                 notice = "Couldn't save the edit: \(error.localizedDescription)"
@@ -464,6 +487,7 @@ struct PracticeView: View {
     @AppStorage(CardTextScale.key) private var textScale = 1.0
     @State private var editImage: NSImage?          // a new image, saved with the card
     @State private var editImageRemoved = false
+    @State private var splitCards: [SplitCard] = []
     @State private var confirmingDelete = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -506,6 +530,10 @@ struct PracticeView: View {
         .onChange(of: session.current?.id) { _ in
             zoomed = nil
             confirmingDelete = false
+            splitCards = []
+        }
+        .onChange(of: session.editing) { isEditing in
+            if !isEditing { splitCards = [] }
         }
     }
 
@@ -545,13 +573,23 @@ struct PracticeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
                     .frame(maxHeight: .infinity)
+                if session.canEditCurrent { addCardButton }
             } else {
-                ScrollView {
-                    card(item)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            card(item)
+                            ForEach($splitCards) { splitCardEditor($0).id($0.wrappedValue.id) }
+                            if session.canEditCurrent { addCardButton.id("addCard") }
+                        }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 4)
+                    }
+                    .scrollIndicators(.hidden)
+                    .onChange(of: splitCards.count) { _ in
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("addCard", anchor: .bottom) }
+                    }
                 }
-                .scrollIndicators(.hidden)
             }
 
             if let notice = session.notice {
@@ -701,11 +739,7 @@ struct PracticeView: View {
                 .disabled(session.busy)
                 CardIconButton(systemName: "pencil",
                                help: session.canEditCurrent ? "Edit card" : "Two-way and list cards are edited in the web app") {
-                    editQuestion = session.current?.question ?? ""
-                    editAnswer = session.current?.answer ?? ""
-                    editImage = nil
-                    editImageRemoved = false
-                    session.beginEdit()
+                    beginEditing()
                 }
                 .disabled(!session.canEditCurrent || session.busy)
                 CardIconButton(systemName: "trash", help: "Delete card", hoverTint: Color(hex: "e5534b")) {
@@ -713,6 +747,52 @@ struct PracticeView: View {
                 }
                 .disabled(session.busy)
             }
+        }
+    }
+
+    private func beginEditing() {
+        editQuestion = session.current?.question ?? ""
+        editAnswer = session.current?.answer ?? ""
+        editImage = nil
+        editImageRemoved = false
+        session.beginEdit()
+    }
+
+    /// Below the card: opens a blank card, to split this one in two or more. From a card being
+    /// reviewed it opens the editor too, since the split usually changes the original as well.
+    private var addCardButton: some View {
+        Button(action: {
+            if !session.editing { beginEditing() }
+            if session.editing { splitCards.append(SplitCard()) }
+        }) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(mutedText)
+                .frame(width: 30, height: 30)
+                .overlay(Circle().stroke(rule, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Add a new card, to split this one")
+    }
+
+    private func splitCardEditor(_ split: Binding<SplitCard>) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CardTextField(label: "Question", text: split.question, prominent: true, minLines: 2, autofocus: true)
+            CardTextField(label: "Answer", text: split.answer, minLines: 3)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 34)
+        .padding(.bottom, 24)
+        .background(cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(rule.opacity(0.7), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            let id = split.wrappedValue.id
+            CardIconButton(systemName: "xmark", help: "Remove this new card") {
+                splitCards.removeAll { $0.id == id }
+            }
+            .padding(8)
         }
     }
 
@@ -808,9 +888,13 @@ struct PracticeView: View {
                 Button("Cancel") { session.cancelEdit() }
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .keyboardShortcut(.cancelAction)
-                Button(action: { session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange) }) {
+                Button(action: {
+                    session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange, newCards: splitCards) { made in
+                        splitCards.removeAll { $0.id == made.id }
+                    }
+                }) {
                     HStack(spacing: 6) {
-                        Text("Save")
+                        Text(splitCards.isEmpty ? "Save" : "Save all")
                         Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
                     }
                 }

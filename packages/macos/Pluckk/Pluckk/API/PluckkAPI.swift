@@ -457,7 +457,7 @@ struct ReviewItem: Decodable, Identifiable {
     var previews: IntervalPreviews
     let folder: Folder?
 
-    struct Folder: Decodable { let name: String? }
+    struct Folder: Decodable { let id: String?; let name: String? }
 
     var id: String { "\(card_id):\(component_id)" }
 
