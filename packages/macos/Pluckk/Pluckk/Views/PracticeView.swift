@@ -132,6 +132,10 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    func applyExternalImage(cardId: String, url: String) {
+        for i in queue.indices where queue[i].card_id == cardId { queue[i].image_url = url }
+    }
+
     func applyExternalTags(cardId: String, tags: [String]) {
         for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
     }

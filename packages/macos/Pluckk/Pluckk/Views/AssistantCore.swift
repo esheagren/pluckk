@@ -44,6 +44,9 @@ struct ModelTurn {
     let toolCalls: [ToolCall]
     let stopReason: String
     let assistantMessage: [String: Any]
+    var containerId: String? = nil
+    /// Files the code sandbox made this turn.
+    var files: [String] = []
 }
 
 struct ProviderError: LocalizedError {
@@ -75,8 +78,10 @@ enum ModelAPI {
 
     /// One streaming turn. `onText` receives text deltas as they arrive.
     static func streamTurn(config: ProviderConfig, system: String, messages: [[String: Any]],
-                           tools: [ToolSpec], onText: @MainActor @escaping (String) -> Void) async throws -> ModelTurn {
-        let request = try buildRequest(config: config, system: system, messages: messages, tools: tools)
+                           tools: [ToolSpec], containerId: String? = nil,
+                           onText: @MainActor @escaping (String) -> Void,
+                           onActivity: @MainActor @escaping (String) -> Void = { _ in }) async throws -> ModelTurn {
+        let request = try buildRequest(config: config, system: system, messages: messages, tools: tools, containerId: containerId)
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProviderError(status: 0, message: "No response from the provider") }
         guard (200..<300).contains(http.statusCode) else {
@@ -93,11 +98,13 @@ enum ModelAPI {
             guard let data = payload.data(using: .utf8),
                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if let delta = try parser.consume(event) { await onText(delta) }
+            if let activity = parser.takeActivity() { await onActivity(activity) }
         }
         return parser.finish()
     }
 
-    static func buildRequest(config: ProviderConfig, system: String, messages: [[String: Any]], tools: [ToolSpec]) throws -> URLRequest {
+    static func buildRequest(config: ProviderConfig, system: String, messages: [[String: Any]], tools: [ToolSpec],
+                             containerId: String? = nil) throws -> URLRequest {
         let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         let path = config.kind == .anthropic ? "/v1/messages" : "/chat/completions"
         guard let url = URL(string: base + path) else {
@@ -123,8 +130,9 @@ enum ModelAPI {
                 "tools": tools.map {
                     ["name": $0.name, "description": $0.description, "input_schema": $0.schema,
                      "eager_input_streaming": true] as [String: Any]
-                },
+                } + hostedTools(config.model),
             ]
+            if let containerId { body["container"] = containerId }
             if supportsEffort(config.model) { body["output_config"] = ["effort": "medium"] }
             // If a safety classifier declines, retry on the API's default fallback model.
             if supportsDefaultFallback(config.model) {
@@ -146,6 +154,35 @@ enum ModelAPI {
         // Sorted keys: identical history serialises identically, which keeps Claude's cache valid.
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return request
+    }
+
+    /// Web search and a code sandbox, which Anthropic runs: nothing here executes on this Mac.
+    private static func hostedTools(_ model: String) -> [[String: Any]] {
+        guard !model.contains("haiku") else { return [] }
+        return [
+            ["type": "web_search_20260209", "name": "web_search", "max_uses": 5],
+            ["type": "web_fetch_20260209", "name": "web_fetch"],
+            ["type": "code_execution_20260120", "name": "code_execution"],
+        ]
+    }
+
+    /// Download a file the code sandbox made.
+    static func downloadFile(_ id: String, config: ProviderConfig) async throws -> (name: String, data: Data) {
+        func get(_ path: String) async throws -> Data {
+            let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+            guard let url = URL(string: "\(base)/v1/files/\(path)") else { throw ProviderError(status: 0, message: "Bad file id") }
+            var request = URLRequest(url: url)
+            request.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                throw ProviderError(status: status, message: errorMessage(from: String(decoding: data, as: UTF8.self)))
+            }
+            return data
+        }
+        let meta = try? JSONSerialization.jsonObject(with: try await get(id)) as? [String: Any]
+        return (meta?["filename"] as? String ?? id, try await get("\(id)/content"))
     }
 
     private static func supportsEffort(_ model: String) -> Bool {
@@ -173,6 +210,8 @@ enum ModelAPI {
 /// edited, because Claude's thinking blocks are only valid in the exact history that made them.
 final class AssistantHistory {
     var messages: [[String: Any]] = []
+    /// Claude's code sandbox, kept so files and variables last the whole conversation.
+    var containerId: String?
 }
 
 enum AssistantLoop {
@@ -185,13 +224,18 @@ enum AssistantLoop {
     static func run(config: ProviderConfig, system: String, history: AssistantHistory, tools: [ToolSpec],
                     onTurnStart: @MainActor () -> Void,
                     onText: @MainActor @escaping (String) -> Void,
+                    onActivity: @MainActor @escaping (String) -> Void,
+                    onFiles: @MainActor ([String]) async -> Void,
                     onNotice: @MainActor (String) -> Void,
                     execute: @MainActor (ToolCall) async -> ToolResult) async throws {
         for _ in 0..<maxSteps {
             onTurnStart()
             let turn = try await ModelAPI.streamTurn(config: config, system: system, messages: history.messages,
-                                                     tools: tools, onText: onText)
+                                                     tools: tools, containerId: history.containerId,
+                                                     onText: onText, onActivity: onActivity)
             history.messages.append(turn.assistantMessage)
+            history.containerId = turn.containerId ?? history.containerId
+            if !turn.files.isEmpty { await onFiles(turn.files) }
 
             let truncated = turn.stopReason == "max_tokens" || turn.stopReason == "length"
             if turn.stopReason == "refusal" { onNotice("The model declined that request.") }
@@ -221,6 +265,12 @@ private protocol StreamParser {
     /// Handle one SSE event; returns any text delta.
     mutating func consume(_ event: [String: Any]) throws -> String?
     func finish() -> ModelTurn
+    /// A line about hosted work that has just begun, if any.
+    mutating func takeActivity() -> String?
+}
+
+extension StreamParser {
+    mutating func takeActivity() -> String? { nil }
 }
 
 /// Claude. Content blocks are kept whole and in order, because thinking blocks (and their
@@ -229,6 +279,40 @@ private struct AnthropicStreamParser: StreamParser {
     private var blocks: [Int: [String: Any]] = [:]
     private var partialInput: [Int: String] = [:]
     private var stopReason = "end_turn"
+    private var containerId: String?
+    private var activity: String?
+
+    private mutating func noteContainer(_ holder: [String: Any]?) {
+        if let id = (holder?["container"] as? [String: Any])?["id"] as? String { containerId = id }
+    }
+
+    mutating func takeActivity() -> String? {
+        defer { activity = nil }
+        return activity
+    }
+
+    /// What a hosted tool is doing, from its finished input.
+    private static func describe(_ block: [String: Any], input: String) -> String? {
+        let args = input.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        switch block["name"] as? String {
+        case "web_search":
+            // Empty when the search is made from inside Claude's sandbox.
+            let query = args?["query"] as? String ?? ""
+            return query.isEmpty ? "Searching the web" : "Searching the web: \(query)"
+        case "web_fetch": return "Reading \(args?["url"] as? String ?? "a page")"
+        case "code_execution", "bash_code_execution": return "Running code"
+        case "text_editor_code_execution": return "Working on a file in the sandbox"
+        default: return nil
+        }
+    }
+
+    /// file_ids in a code result, which sits under content.content in the block.
+    private static func files(in block: [String: Any]) -> [String] {
+        guard (block["type"] as? String)?.hasSuffix("code_execution_tool_result") == true,
+              let result = block["content"] as? [String: Any],
+              let outputs = result["content"] as? [[String: Any]] else { return [] }
+        return outputs.compactMap { $0["file_id"] as? String }
+    }
 
     private mutating func append(_ text: String, to field: String, at index: Int) {
         guard var block = blocks[index] else { return }
@@ -241,6 +325,12 @@ private struct AnthropicStreamParser: StreamParser {
         case "content_block_start":
             guard let index = event["index"] as? Int, let block = event["content_block"] as? [String: Any] else { return nil }
             blocks[index] = block
+        case "content_block_stop":
+            guard let index = event["index"] as? Int, let block = blocks[index],
+                  block["type"] as? String == "server_tool_use" else { return nil }
+            activity = Self.describe(block, input: partialInput[index] ?? "")
+        case "message_start":
+            noteContainer(event["message"] as? [String: Any])
         case "content_block_delta":
             guard let index = event["index"] as? Int, let delta = event["delta"] as? [String: Any] else { return nil }
             switch delta["type"] as? String {
@@ -254,10 +344,16 @@ private struct AnthropicStreamParser: StreamParser {
                 append(delta["signature"] as? String ?? "", to: "signature", at: index)
             case "input_json_delta":
                 partialInput[index, default: ""] += delta["partial_json"] as? String ?? ""
+            case "citations_delta":
+                guard var block = blocks[index], let citation = delta["citation"] else { return nil }
+                block["citations"] = (block["citations"] as? [Any] ?? []) + [citation]
+                blocks[index] = block
             default:
                 break
             }
         case "message_delta":
+            noteContainer(event["delta"] as? [String: Any])
+            noteContainer(event)
             if let delta = event["delta"] as? [String: Any], let reason = delta["stop_reason"] as? String { stopReason = reason }
         case "error":
             let error = event["error"] as? [String: Any]
@@ -272,11 +368,18 @@ private struct AnthropicStreamParser: StreamParser {
         var content: [[String: Any]] = []
         var text = ""
         var calls: [ToolCall] = []
+        var files: [String] = []
         for index in blocks.keys.sorted() {
             var block = blocks[index]!
+            files += Self.files(in: block)
             switch block["type"] as? String {
             case "text":
                 text += block["text"] as? String ?? ""
+            case "server_tool_use":
+                if let raw = partialInput[index], let data = raw.data(using: .utf8),
+                   let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    block["input"] = input
+                }
             case "tool_use":
                 let raw = partialInput[index] ?? "{}"
                 // The echoed block needs a real object even if the streamed input was cut off;
@@ -290,7 +393,8 @@ private struct AnthropicStreamParser: StreamParser {
             content.append(block)
         }
         return ModelTurn(text: text, toolCalls: calls, stopReason: stopReason,
-                         assistantMessage: ["role": "assistant", "content": content])
+                         assistantMessage: ["role": "assistant", "content": content],
+                         containerId: containerId, files: files)
     }
 }
 

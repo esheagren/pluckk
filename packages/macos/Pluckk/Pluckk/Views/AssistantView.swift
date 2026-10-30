@@ -101,6 +101,20 @@ struct AssistantView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .lineLimit(2)
+        case .image:
+            if let file = item.file, let image = NSImage(contentsOf: file) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .onTapGesture { NSWorkspace.shared.open(file) }
+                    .help("Open \(item.text)")
+            }
+        case .file:
+            Button(item.text) {
+                if let file = item.file { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+            .buttonStyle(QuietButtonStyle())
+            .help("Show in Finder")
         case .notice:
             Text(item.text)
                 .font(.system(size: 12))
@@ -212,7 +226,7 @@ struct AssistantSettingsSection: View {
                 Button("Reset to default") { prompt = AssistantSettings.defaultSystemPrompt }
                     .buttonStyle(.plain).font(.caption).foregroundColor(.secondary)
             }
-            Text("Your API key stays on this Mac and is sent only to the provider above. Usage is billed by that provider, separately from any Claude subscription.")
+            Text("Your API key stays on this Mac and is sent only to the provider above. Usage is billed by that provider, separately from any Claude subscription. With Claude, it can search the web ($10 per 1,000 searches) and run code in Anthropic's sandbox, never on this Mac.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
