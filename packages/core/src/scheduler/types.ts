@@ -5,10 +5,10 @@
 import type { CardStatus, Rating } from '../entities.js';
 export type { CardStatus, Rating };
 
-export interface EaseBonus { easy: number; good: number; hard: number; again: number }
-export interface IntervalMultiplier { hard: number; easy: number }
-export interface NewCardIntervals { again: number; hard: number; good: number; easy: number }
-export interface GraduationIntervals { again: number; hard: number; good: number; easy: number }
+export interface EaseBonus { trivial: number; easy: number; good: number; hard: number; again: number }
+export interface IntervalMultiplier { hard: number; easy: number; trivial: number }
+export interface NewCardIntervals { again: number; hard: number; good: number; easy: number; trivial: number }
+export interface GraduationIntervals { again: number; hard: number; good: number; easy: number; trivial: number }
 
 export interface SM2Config {
   /** Initial ease factor for new cards (typically 2.5) */
@@ -60,7 +60,7 @@ export interface NextReviewResult {
   status: CardStatus;
 }
 
-export interface IntervalPreviews { again: string; hard: string; good: string; easy: string }
+export interface IntervalPreviews { again: string; hard: string; good: string; easy: string; trivial: string }
 
-export interface RatingsMap { readonly AGAIN: 'again'; readonly HARD: 'hard'; readonly GOOD: 'good'; readonly EASY: 'easy' }
+export interface RatingsMap { readonly AGAIN: 'again'; readonly HARD: 'hard'; readonly GOOD: 'good'; readonly EASY: 'easy'; readonly TRIVIAL: 'trivial' }
 export interface StatusMap { readonly NEW: 'new'; readonly LEARNING: 'learning'; readonly REVIEW: 'review'; readonly RELEARNING: 'relearning'; readonly SUSPENDED: 'suspended' }

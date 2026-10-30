@@ -8,7 +8,7 @@ import type { CardSpec, Provenance } from './entities.js';
 
 // ---------------------------------------------------------------- primitives
 
-export const ratingSchema = z.enum(['again', 'hard', 'good', 'easy']);
+export const ratingSchema = z.enum(['again', 'hard', 'good', 'easy', 'trivial']);
 export const cardStatusSchema = z.enum(['new', 'learning', 'review', 'relearning', 'suspended']);
 export const simpleStyleSchema = z.enum(['qa', 'cloze', 'explanation', 'application', 'diagram']);
 

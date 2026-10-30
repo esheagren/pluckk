@@ -7,7 +7,7 @@ import {
 } from './sm2.js';
 
 const NOW = new Date('2026-09-02T12:00:00.000Z'); // millis % 1000 === 0 → jitter 0
-const RATINGS: Rating[] = ['again', 'hard', 'good', 'easy'];
+const RATINGS: Rating[] = ['again', 'hard', 'good', 'easy', 'trivial'];
 
 function reviewState(intervalDays: number, ease = 2.5, lastReviewedDaysAgo = intervalDays): ComponentState {
   return {
@@ -32,6 +32,13 @@ describe('SM-2 parity with the pre-core-engine behaviour', () => {
     const s: ComponentState = { ...initialComponentState(NOW), status: 'learning', intervalDays: 0.00694 };
     expect(computeNext(s, 'good', NOW)).toMatchObject({ intervalDays: 2, status: 'review' });
     expect(computeNext(s, 'again', NOW).status).toBe('learning');
+  });
+  it('trivial pushes a card much further than easy', () => {
+    const fresh = initialComponentState(NOW);
+    expect(computeNext(fresh, 'trivial', NOW).intervalDays).toBe(21);
+    const s = reviewState(10);
+    expect(computeNext(s, 'trivial', NOW).intervalDays).toBeCloseTo(10 * 2.75 * 2.6);
+    expect(computeNext(reviewState(300), 'trivial', NOW).intervalDays).toBe(DEFAULT_CONFIG.maxIntervalDays);
   });
   it('a review card grows by ease, with hard/easy multipliers', () => {
     const s = reviewState(10);

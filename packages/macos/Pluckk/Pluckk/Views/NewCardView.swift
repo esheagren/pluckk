@@ -143,33 +143,7 @@ struct NewCardView: View {
     }
 
     private func drop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        if provider.canLoadObject(ofClass: NSImage.self) {
-            _ = provider.loadObject(ofClass: NSImage.self) { obj, _ in
-                if let img = obj as? NSImage { DispatchQueue.main.async { image = img } }
-            }
-            return true
-        }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            if let url, let img = NSImage(contentsOf: url) { DispatchQueue.main.async { image = img } }
-        }
-        return true
-    }
-
-    /// JPEG, longest side ≤ 1600px: keeps the upload well under the API's request size limit.
-    private func jpegData(_ img: NSImage) -> Data? {
-        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let scale = min(1, 1600 / CGFloat(max(cg.width, cg.height)))
-        let w = Int(CGFloat(cg.width) * scale), h = Int(CGFloat(cg.height) * scale)
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
-        ctx.interpolationQuality = .high
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
-        guard let scaled = ctx.makeImage() else { return nil }
-        return NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        loadDroppedImage(providers) { image = $0 }
     }
 
     // MARK: Save
@@ -180,7 +154,7 @@ struct NewCardView: View {
         let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder = deckId.isEmpty ? nil : deckId
         let tags = (image != nil && imageOnQuestion) ? [ImageSide.questionTag] : []
-        let imageData = image.flatMap(jpegData)
+        let imageData = image.flatMap(cardImageJPEG)
         saving = true
         notice = nil
         Task {
@@ -220,6 +194,37 @@ struct NewCardView: View {
             if !deckId.isEmpty && !decks.contains(where: { $0.folder_id == deckId }) { deckId = "" }
         }
     }
+}
+
+/// The image from a drop (dragged picture or image file), delivered on the main thread.
+func loadDroppedImage(_ providers: [NSItemProvider], then deliver: @escaping (NSImage) -> Void) -> Bool {
+    guard let provider = providers.first else { return false }
+    if provider.canLoadObject(ofClass: NSImage.self) {
+        _ = provider.loadObject(ofClass: NSImage.self) { obj, _ in
+            if let img = obj as? NSImage { DispatchQueue.main.async { deliver(img) } }
+        }
+        return true
+    }
+    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+        if let url, let img = NSImage(contentsOf: url) { DispatchQueue.main.async { deliver(img) } }
+    }
+    return true
+}
+
+/// JPEG, longest side ≤ 1600px: keeps the upload well under the API's request size limit.
+func cardImageJPEG(_ img: NSImage) -> Data? {
+    guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    let scale = min(1, 1600 / CGFloat(max(cg.width, cg.height)))
+    let w = Int(CGFloat(cg.width) * scale), h = Int(CGFloat(cg.height) * scale)
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+    ctx.setFillColor(NSColor.white.cgColor)
+    ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+    ctx.interpolationQuality = .high
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    guard let scaled = ctx.makeImage() else { return nil }
+    return NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
 }
 
 /// Inline markdown (**bold**, *italic*, `code`) for card text; anything else shows as typed.

@@ -3,6 +3,12 @@ import AppKit
 
 // MARK: - Session
 
+/// What saving the card editor does to the card's image.
+enum CardImageChange {
+    case keep, remove
+    case replace(NSImage)
+}
+
 /// The practice session, kept outside the view so collapsing the panel or switching tabs
 /// doesn't lose your place. The server deals the session and schedules every rating; this
 /// only walks the queue (an "again" goes back to the end, as in the web app).
@@ -18,7 +24,7 @@ final class PracticeSession: ObservableObject {
     @Published var revealed = false
     @Published private(set) var reviewedCount = 0
     @Published private(set) var busy = false
-    @Published private(set) var notice: String?
+    @Published var notice: String?
     @Published private(set) var editing = false
     /// A timed sprint ran out (SessionTimer); Practice shows "Good job" and the practice grid
     /// for a few seconds, then returns to the next card on its own.
@@ -170,7 +176,7 @@ final class PracticeSession: ObservableObject {
     private var keyMonitor: Any?
     private var clickMonitor: Any?
 
-    /// Practice's keys (Space reveal, 1–4 rate, ← / Z back) handled before the rest of the app,
+    /// Practice's keys (Space reveal, 1–5 rate, ← / Z back) handled before the rest of the app,
     /// so they still work after text on the card has been selected: a selectable text view
     /// takes keyboard focus and would otherwise swallow them. Button shortcuts wouldn't do: they'd
     /// also fire while typing in the assistant. Skipped while typing in an editor,
@@ -179,14 +185,21 @@ final class PracticeSession: ObservableObject {
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Backspace goes straight to the field being edited, so nothing on the way can lose it.
+            if self?.editing == true, event.keyCode == 51,
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+               let tv = PluckkPanel.shared?.firstResponder as? NSTextView, tv.isEditable {
+                tv.deleteBackward(nil)
+                return nil
+            }
             guard let self, AppState.shared.currentView == .practice,
                   let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel,
                   !self.editing, !self.timesUp, case .reviewing = self.phase else { return event }
             // The assistant's box is the only editor left on this screen. While it's blank the
-            // keys still belong to the card, so Space and 1–4 carry on after asking something.
+            // keys still belong to the card, so Space and 1–5 carry on after asking something.
             if let tv = panel.firstResponder as? NSTextView, tv.isEditable {
                 let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                guard blank, [49, 18, 19, 20, 21, 123].contains(event.keyCode) else { return event }
+                guard blank, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
             }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods.isEmpty else { return event }
@@ -195,9 +208,9 @@ final class PracticeSession: ObservableObject {
             switch event.keyCode {
             case 49:                                    // Space
                 if !self.revealed { self.reveal() }
-            case 18, 19, 20, 21:                        // 1–4
+            case 18, 19, 20, 21, 23:                    // 1–5
                 guard self.revealed else { handled = false; break }
-                let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy][event.keyCode]!
+                let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy, 23: .trivial][event.keyCode]!
                 self.rate(rating)
             case 123, 6:                                // ← or Z
                 self.undo()
@@ -309,26 +322,55 @@ final class PracticeSession: ObservableObject {
 
     func cancelEdit() { editing = false }
 
-    func saveEdit(question: String, answer: String) {
+    func saveEdit(question: String, answer: String, image: CardImageChange) {
         guard let item = current, editing, !busy, let token = AuthManager.shared.accessToken else { return }
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !a.isEmpty else { notice = "Question and answer can't be empty."; return }
-        if q == item.question && a == item.answer { editing = false; return }
+        let textChanged = q != item.question || a != item.answer
+        if !textChanged, case .keep = image { editing = false; return }
         busy = true
         notice = nil
         Task {
             defer { busy = false }
             do {
-                try await PluckkAPI.shared.updateCard(token: token, cardId: item.card_id, question: q, answer: a)
-                for i in queue.indices where queue[i].card_id == item.card_id {
-                    queue[i].question = q
-                    queue[i].answer = a
+                if textChanged {
+                    try await PluckkAPI.shared.updateCard(token: token, cardId: item.card_id, question: q, answer: a)
+                    for i in queue.indices where queue[i].card_id == item.card_id {
+                        queue[i].question = q
+                        queue[i].answer = a
+                    }
                 }
+                try await saveImage(image, for: item, token: token)
                 editing = false
             } catch {
                 notice = "Couldn't save the edit: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func saveImage(_ change: CardImageChange, for item: ReviewItem, token: String) async throws {
+        var url: String?
+        var tags = item.tags
+        switch change {
+        case .keep:
+            return
+        case .remove:
+            try await PluckkAPI.shared.setCardImage(token: token, cardId: item.card_id, url: nil)
+        case .replace(let image):
+            guard let data = cardImageJPEG(image) else { throw APIError.serverError("That image couldn't be read.") }
+            let stored = try await PluckkAPI.shared.uploadCardImage(token: token, cardId: item.card_id, imageData: data, mimeType: "image/jpeg")
+            // A new image overwrites the same address; the version stops the old one showing.
+            url = "\(stored)?v=\(Int(Date().timeIntervalSince1970))"
+            // Art cards are on the question side by where they're stored, which the new image isn't.
+            if item.imageIsQuestion, tags?.contains(ImageSide.questionTag) != true {
+                tags = (tags ?? []) + [ImageSide.questionTag]
+            }
+            try await PluckkAPI.shared.setCardImage(token: token, cardId: item.card_id, url: url, tags: tags)
+        }
+        for i in queue.indices where queue[i].card_id == item.card_id {
+            queue[i].image_url = url
+            queue[i].tags = tags
         }
     }
 
@@ -390,6 +432,8 @@ struct PracticeView: View {
     @State private var zoomed: URL?
     @State private var editQuestion = ""
     @State private var editAnswer = ""
+    @State private var editImage: NSImage?          // a new image, saved with the card
+    @State private var editImageRemoved = false
     @State private var confirmingDelete = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -630,6 +674,8 @@ struct PracticeView: View {
                                help: session.canEditCurrent ? "Edit card" : "Two-way and list cards are edited in the web app") {
                     editQuestion = session.current?.question ?? ""
                     editAnswer = session.current?.answer ?? ""
+                    editImage = nil
+                    editImageRemoved = false
                     session.beginEdit()
                 }
                 .disabled(!session.canEditCurrent || session.busy)
@@ -645,7 +691,67 @@ struct PracticeView: View {
         VStack(alignment: .leading, spacing: 14) {
             CardTextField(label: "Question", text: $editQuestion, prominent: true, minLines: 3, autofocus: true)
             CardTextField(label: "Answer", text: $editAnswer, minLines: 4)
+            imageEditor
         }
+    }
+
+    private var editImageURL: URL? {
+        editImageRemoved ? nil : session.current?.image_url.flatMap(URL.init(string:))
+    }
+
+    /// Replace or remove the card's image. Nothing changes until Save.
+    private var imageEditor: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("IMAGE").font(.system(size: 10, weight: .semibold)).tracking(0.7).foregroundColor(.secondary)
+            if let editImage {
+                Image(nsImage: editImage).resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else if let url = editImageURL {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    ProgressView().controlSize(.small)
+                }
+                .frame(maxHeight: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            HStack(spacing: 10) {
+                Button(action: pasteEditImage) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "photo.on.rectangle")
+                        Text(editImage != nil || editImageURL != nil ? "Replace from clipboard" : "Paste image")
+                    }
+                }
+                .buttonStyle(QuietButtonStyle())
+                Text("or drop an image here").font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer()
+                if editImage != nil || editImageURL != nil {
+                    Button("Remove") {
+                        editImage = nil
+                        editImageRemoved = true
+                    }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+            loadDroppedImage(providers) { editImage = $0 }
+        }
+    }
+
+    private func pasteEditImage() {
+        if let image = SelectionReader().getClipboardImage() {
+            editImage = image
+        } else {
+            session.notice = "No image on the clipboard. Take a screenshot with ⌃⇧⌘4 (to clipboard), then paste."
+        }
+    }
+
+    private var editImageChange: CardImageChange {
+        if let editImage { return .replace(editImage) }
+        return editImageRemoved ? .remove : .keep
     }
 
     /// Takes whatever room the text leaves (never less than 120pt); click to see it full-panel.
@@ -673,7 +779,7 @@ struct PracticeView: View {
                 Button("Cancel") { session.cancelEdit() }
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .keyboardShortcut(.cancelAction)
-                Button(action: { session.saveEdit(question: editQuestion, answer: editAnswer) }) {
+                Button(action: { session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange) }) {
                     HStack(spacing: 6) {
                         Text("Save")
                         Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
@@ -944,6 +1050,7 @@ struct RatingButton: View {
         case .hard: return Color(hex: "d4a72c")
         case .good: return Color(hex: "3fb950")
         case .easy: return PluckkTheme.bidirectionalAccent
+        case .trivial: return Color(hex: "a371f7")
         }
     }
 

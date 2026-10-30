@@ -82,6 +82,10 @@ export function computeNext(
         newInterval = Math.max(base * newEase * config.intervalMultiplier.easy, 1);
         newStatus = STATUS.REVIEW;
         break;
+      case RATINGS.TRIVIAL:
+        newInterval = Math.max(base * newEase * config.intervalMultiplier.trivial, 1);
+        newStatus = STATUS.REVIEW;
+        break;
       default:
         throw new Error(`Unknown rating: ${rating}`);
     }
@@ -158,7 +162,7 @@ export function previewComponent(
   config: SM2Config = DEFAULT_CONFIG,
   mechanics: Mechanics = DEFAULT_MECHANICS,
 ): IntervalPreviews {
-  const out = { again: '', hard: '', good: '', easy: '' };
+  const out = { again: '', hard: '', good: '', easy: '', trivial: '' };
   for (const rating of Object.values(RATINGS) as Rating[]) {
     out[rating] = getIntervalDisplay(computeNext(state, rating, now, config, mechanics).intervalDays);
   }

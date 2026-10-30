@@ -1,7 +1,7 @@
 // Human-readable lines for a card's diary (the card_events list).
 import type { CardEventRow } from '@pluckk/shared/api';
 
-const RATING_WORD: Record<string, string> = { again: 'Again', hard: 'Hard', good: 'Good', easy: 'Easy' };
+const RATING_WORD: Record<string, string> = { again: 'Again', hard: 'Hard', good: 'Good', easy: 'Easy', trivial: 'Trivial' };
 
 function componentName(id?: string): string {
   if (!id || id === 'main') return '';

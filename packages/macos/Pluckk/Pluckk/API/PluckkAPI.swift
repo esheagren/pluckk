@@ -224,10 +224,20 @@ class PluckkAPI {
     }
 
     /// Attach an image to a card (stored in Vercel Blob; replaces any existing image).
-    func uploadCardImage(token: String, cardId: String, imageData: Data, mimeType: String) async throws {
-        _ = try await send(token: token, method: "POST", path: "/api/v1/images", json: [
+    @discardableResult
+    func uploadCardImage(token: String, cardId: String, imageData: Data, mimeType: String) async throws -> String {
+        let data = try await send(token: token, method: "POST", path: "/api/v1/images", json: [
             "card_id": cardId, "image_data": imageData.base64EncodedString(), "mime_type": mimeType,
         ])
+        struct Uploaded: Decodable { let image_url: String }
+        return try JSONDecoder().decode(Uploaded.self, from: data).image_url
+    }
+
+    /// Point a card at an image, or remove it with nil. `tags` replaces the card's tags if given.
+    func setCardImage(token: String, cardId: String, url: String?, tags: [String]? = nil) async throws {
+        var body: [String: Any] = ["image_url": url ?? NSNull()]
+        if let tags { body["tags"] = tags }
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: body)
     }
 
     // MARK: - Review (practice)
@@ -441,7 +451,7 @@ struct ReviewItem: Decodable, Identifiable {
     var answer: String
     var tags: [String]?
     let component_count: Int
-    let image_url: String?
+    var image_url: String?
     let source_url: String?
     var is_new: Bool
     var previews: IntervalPreviews
@@ -483,6 +493,7 @@ struct IntervalPreviews: Decodable {
     let hard: String
     let good: String
     let easy: String
+    let trivial: String
 
     func label(for rating: ReviewRating) -> String {
         switch rating {
@@ -490,21 +501,23 @@ struct IntervalPreviews: Decodable {
         case .hard: return hard
         case .good: return good
         case .easy: return easy
+        case .trivial: return trivial
         }
     }
 }
 
 enum ReviewRating: String, CaseIterable {
-    case again, hard, good, easy
+    case again, hard, good, easy, trivial
 
     var title: String { rawValue.capitalized }
-    /// Keys 1–4, as in the web app.
+    /// Keys 1–5.
     var key: Character {
         switch self {
         case .again: return "1"
         case .hard: return "2"
         case .good: return "3"
         case .easy: return "4"
+        case .trivial: return "5"
         }
     }
 }
