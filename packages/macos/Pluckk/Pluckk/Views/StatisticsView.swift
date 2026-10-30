@@ -42,24 +42,10 @@ struct StatisticsView: View {
         GeometryReader { outer in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Text("I'll take on")
-                        TextField("", value: Binding(get: { total }, set: setTotal), format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .multilineTextAlignment(.center)
-                            .frame(width: 54)
-                        Text("new cards a day")
-                        Spacer()
-                        if decks.contains(where: \.is_paused) {
-                            Text("Paused decks aren't shown").font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                    .font(.system(size: 13))
-
                     GeometryReader { geo in ringWithDecks(in: geo.size) }
-                        .frame(height: max(440, outer.size.height - 110))
+                        .frame(height: max(440, outer.size.height - 70))
 
-                    Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly.")
+                    Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
                         .font(.system(size: 11))
                         .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
                         .frame(maxWidth: .infinity)
@@ -111,13 +97,22 @@ struct StatisticsView: View {
                     .frame(width: radius * 2, height: radius * 2)
                     .position(center)
             }
-            VStack(spacing: 0) {
-                Text("\(total)").font(.system(size: 34, weight: .semibold).monospacedDigit())
-                Text("new a day").font(.system(size: 11)).foregroundColor(.secondary)
+            VStack(spacing: 4) {
+                Text("I'll take on")
+                TextField("", value: Binding(get: { total }, set: setTotal), format: .number)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: radius < 100 ? 24 : 34, weight: .semibold).monospacedDigit())
+                    .multilineTextAlignment(.center)
+                    .frame(width: radius < 100 ? 72 : 104)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
+                Text("new cards a day")
             }
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
             .position(center)
             ForEach(placed, id: \.slice.deck.id) { label in
-                deckLabel(label.slice, onRight: label.onRight)
+                deckLabel(label.slice, onRight: label.onRight, compact: labelWidth < 150)
                     .frame(width: labelWidth, height: Self.labelHeight, alignment: label.onRight ? .leading : .trailing)
                     .position(x: center.x + (label.onRight ? 1 : -1) * (radius + 34 + labelWidth / 2), y: label.y)
                     .animation(.easeOut(duration: 0.15), value: label.y)
@@ -156,7 +151,7 @@ struct StatisticsView: View {
         return placed
     }
 
-    private func deckLabel(_ slice: Slice, onRight: Bool) -> some View {
+    private func deckLabel(_ slice: Slice, onRight: Bool, compact: Bool) -> some View {
         let deck = slice.deck
         let edge: HorizontalAlignment = onRight ? .leading : .trailing
         let share = total > 0 ? Int((Double(limit(deck)) / Double(total) * 100).rounded()) : 0
@@ -174,7 +169,7 @@ struct StatisticsView: View {
                     .frame(width: 34, height: 20)
                     .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
                 stepButton("plus") { setLimit(deck, limit(deck) + 1) }
-                Text("a day · \(share)%")
+                Text(compact ? "\(share)%" : "a day · \(share)%").lineLimit(1)
             }
             .font(.system(size: 12).monospacedDigit())
             Text("\(deck.new.formatted()) left · \(finishEstimate(deck))")
