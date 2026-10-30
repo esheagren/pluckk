@@ -247,11 +247,16 @@ class PluckkAPI {
     /// A session using the user's Mix settings (deck shares, new-card caps, session size), or,
     /// with `focus`, one deck only (its due cards, then new ones up to the deck's daily cap;
     /// paused decks can be focused). `focus` carries the folder id, nil inside = unfiled.
-    func reviewSession(token: String, focus: String?? = nil) async throws -> [ReviewItem] {
+    /// `ahead` asks for that many new cards past today's limits instead.
+    func reviewSession(token: String, focus: String?? = nil, ahead: Int? = nil) async throws -> [ReviewItem] {
         struct Response: Decodable { let items: [ReviewItem] }
         var body: [String: Any] = ["mode": "scheduled"]
         if let focus {
             body = ["mode": "focus", "folder_id": focus.map { $0 as Any } ?? NSNull()]
+        }
+        if let ahead {
+            body["mode"] = "ahead"
+            body["size"] = ahead
         }
         let data = try await send(token: token, method: "POST", path: "/api/v1/review/session", json: body)
         return try JSONDecoder().decode(Response.self, from: data).items

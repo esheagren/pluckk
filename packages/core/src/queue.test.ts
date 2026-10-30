@@ -32,6 +32,22 @@ function input(over: Partial<MixerInput>): MixerInput {
 const inFolder = (r: ReturnType<typeof selectSession>, f: string, cands: CandidateRow[]) =>
   r.dealt.filter((d) => cands.find((c) => c.cardId === d.cardId)?.folderId === f).length;
 
+describe('practising ahead', () => {
+  it('deals new cards past the daily limit, from one folder', () => {
+    const r = selectSession(input({ mode: 'ahead', folderId: A, size: 7, newReviewedTodayByFolder: new Map([[A, 3]]) }));
+    expect(r.dealt).toHaveLength(7);
+    expect(r.dealtIds.every((id) => id.startsWith('an'))).toBe(true);
+  });
+  it('shares across folders, skipping paused ones, when none is named', () => {
+    const r = selectSession(input({ mode: 'ahead', size: 4 }));
+    expect(r.dealtIds.filter((id) => id.startsWith('an'))).toHaveLength(2);
+    expect(r.dealtIds.filter((id) => id.startsWith('bn'))).toHaveLength(2);
+  });
+  it('stops when the new cards run out', () => {
+    expect(selectSession(input({ mode: 'ahead', folderId: A, size: 50 })).dealt).toHaveLength(10);
+  });
+});
+
 describe('scheduled mode', () => {
   it('explicit 50/50 mix: B capped by new/day, spillover goes to A, paused C excluded', () => {
     const inp = input({ mix: [{ folderId: A, pct: 50 }, { folderId: B, pct: 50 }] });

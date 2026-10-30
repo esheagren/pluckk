@@ -120,7 +120,7 @@ export const reviewUndoBodySchema = z.object({ event_id: z.string().uuid() });
 export type ReviewUndoBody = z.infer<typeof reviewUndoBodySchema>;
 
 export const sessionRequestBodySchema = z.object({
-  mode: z.enum(['scheduled', 'focus', 'backlog']).default('scheduled'),
+  mode: z.enum(['scheduled', 'focus', 'backlog', 'ahead']).default('scheduled'),
   size: z.number().int().positive().max(500).optional(),
   folder_id: z.string().uuid().nullish(),
   mix: z.array(z.object({ folder_id: z.string().uuid().nullable(), pct: z.number().nonnegative() })).optional(),

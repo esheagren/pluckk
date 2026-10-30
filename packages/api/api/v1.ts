@@ -333,7 +333,7 @@ router.on('GET', 'review/today', authed(async (_req, res, user) => {
 
 router.on('POST', 'review/session', authed(async (req, res, user) => {
   const body = (req.body ?? {}) as {
-    mode?: 'scheduled' | 'focus' | 'backlog';
+    mode?: 'scheduled' | 'focus' | 'backlog' | 'ahead';
     size?: number;
     folder_id?: string | null;
     mix?: Array<{ folder_id: string | null; pct: number }>;

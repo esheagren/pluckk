@@ -172,14 +172,23 @@ final class PracticeSession: ObservableObject {
         start()
     }
 
-    func start() {
+    /// After a deal comes back empty: offer new cards past today's limits.
+    enum AheadState { case none, offer, noneLeft }
+    @Published private(set) var aheadState = AheadState.none
+
+    func start() { deal(ahead: nil) }
+
+    func practiceAhead(_ count: Int) { deal(ahead: count) }
+
+    private func deal(ahead: Int?) {
         guard let token = AuthManager.shared.accessToken else { return }
         phase = .loading
         notice = nil
+        aheadState = .none
         let focus: String?? = focusDeck.map { $0.folder_id }
         Task {
             do {
-                let items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus)
+                let items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus, ahead: ahead)
                 queue = items
                 index = 0
                 reviewedCount = 0
@@ -188,6 +197,7 @@ final class PracticeSession: ObservableObject {
                 history = []
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
+                if items.isEmpty { aheadState = ahead == nil ? .offer : .noneLeft }
                 refreshTodayCounts()
             } catch {
                 phase = .failed(error.localizedDescription)
@@ -488,6 +498,7 @@ struct PracticeView: View {
     @State private var editImage: NSImage?          // a new image, saved with the card
     @State private var editImageRemoved = false
     @State private var splitCards: [SplitCard] = []
+    @AppStorage("practiceAheadCount") private var aheadCount = 10
     @State private var confirmingDelete = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -927,7 +938,7 @@ struct PracticeView: View {
                 if let focus = session.focusDeck {
                     FocusDeckChip(title: focus.title) { session.leaveDeck() }
                 }
-                Text(session.reviewedCount > 0 ? "Session done" : (session.focusDeck != nil ? "Nothing due in this deck" : "Nothing due right now"))
+                Text(session.aheadState == .noneLeft ? "No new cards left" : session.reviewedCount > 0 ? "Session done" : (session.focusDeck != nil ? "Nothing due in this deck" : "Nothing due right now"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(primaryText)
                 if session.reviewedCount > 0 {
@@ -935,11 +946,29 @@ struct PracticeView: View {
                         .font(.system(size: 13))
                         .foregroundColor(mutedText)
                 }
+                if session.aheadState == .offer {
+                    HStack(spacing: 8) {
+                        Text("Practice ahead with")
+                        TextField("", value: $aheadCount, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 46)
+                            .onSubmit(practiceAhead)
+                        Stepper("", value: $aheadCount, in: 1...100, step: 5).labelsHidden()
+                        Text("new cards?")
+                    }
+                    .font(.system(size: 13))
+                    .foregroundColor(mutedText)
+                }
                 HStack(spacing: 10) {
                     if session.canUndo {
                         Button("Undo last") { session.undo() }.buttonStyle(PillButtonStyle(prominent: false))
                     }
-                    Button("Start another") { session.start() }.buttonStyle(PillButtonStyle(prominent: true))
+                    if session.aheadState == .offer {
+                        Button("Continue", action: practiceAhead).buttonStyle(PillButtonStyle(prominent: true))
+                    } else {
+                        Button("Start another") { session.start() }.buttonStyle(PillButtonStyle(prominent: true))
+                    }
                 }
                 .padding(.top, 4)
                 Button(action: {
@@ -951,6 +980,10 @@ struct PracticeView: View {
             }
             .padding(24)
         }
+    }
+
+    private func practiceAhead() {
+        session.practiceAhead(min(max(aheadCount, 1), 100))
     }
 
     /// Type that fits its content: short prompts large, long ones step down (as in the web app).

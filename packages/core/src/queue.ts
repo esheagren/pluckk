@@ -10,6 +10,7 @@
 //               fill due → new (per-folder new/day cap), deficits redistributed
 //   focus     — one folder, quota = size, same fill order
 //   backlog   — one folder, every due card oldest-first, batched; no new cards
+//   ahead     — new cards only, past the daily limits, because you asked; one folder or all
 
 import { MAIN_COMPONENT, type ComponentId } from './entities.js';
 import { DEFAULT_MECHANICS, MINUTE_MS } from './scheduler/constants.js';
@@ -28,9 +29,9 @@ export interface MixEntry { folderId: string | null; pct: number }
 export interface FolderInfo { id: string; weight: number | null; isPaused: boolean; newPerDay: number | null }
 
 export interface MixerInput {
-  mode: 'scheduled' | 'focus' | 'backlog';
+  mode: 'scheduled' | 'focus' | 'backlog' | 'ahead';
   size: number;
-  folderId?: string | null;          // focus/backlog
+  folderId?: string | null;          // focus/backlog; ahead, where undefined means every folder
   mix?: MixEntry[];                  // scheduled override
   folders: FolderInfo[];
   candidates: CandidateRow[];        // every non-paused candidate component
@@ -185,6 +186,19 @@ export function selectSession(input: MixerInput): MixerResult {
     noteMeta(f, dealt.length);
     // oldest-first, not shuffled: burn-down order
     return finish('backlog', dealt, { backlog_remaining: b.due.length - dealt.length });
+  }
+
+  if (input.mode === 'ahead') {
+    // Turn by turn across folders, so one deck's oldest cards don't crowd out the rest.
+    const folders = input.folderId !== undefined ? [input.folderId] : [...byFolder.keys()];
+    const dealt: CandidateRow[] = [];
+    for (let i = 0; dealt.length < input.size; i++) {
+      const round = folders.flatMap((f) => byFolder.get(f)?.fresh[i] ?? []);
+      if (round.length === 0) break;
+      dealt.push(...round.slice(0, input.size - dealt.length));
+    }
+    for (const f of folders) noteMeta(f, dealt.filter((c) => c.folderId === f).length);
+    return finish('ahead', order(dealt));
   }
 
   if (input.mode === 'focus') {
