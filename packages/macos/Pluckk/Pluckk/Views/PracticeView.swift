@@ -168,6 +168,7 @@ final class PracticeSession: ObservableObject {
     // MARK: Keys
 
     private var keyMonitor: Any?
+    private var clickMonitor: Any?
 
     /// Practice's keys (Space reveal, 1–4 rate, ← / Z back) handled before the rest of the app,
     /// so they still work after text on the card has been selected: a selectable text view
@@ -181,14 +182,19 @@ final class PracticeSession: ObservableObject {
             guard let self, AppState.shared.currentView == .practice,
                   let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel,
                   !self.editing, !self.timesUp, case .reviewing = self.phase else { return event }
-            if let tv = panel.firstResponder as? NSTextView, tv.isEditable { return event }
+            // The assistant's box is the only editor left on this screen. While it's blank the
+            // keys still belong to the card, so Space and 1–4 carry on after asking something.
+            if let tv = panel.firstResponder as? NSTextView, tv.isEditable {
+                let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                guard blank, [49, 18, 19, 20, 21, 123].contains(event.keyCode) else { return event }
+            }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods.isEmpty else { return event }
 
             var handled = true
             switch event.keyCode {
             case 49:                                    // Space
-                if self.revealed { handled = false } else { self.reveal() }
+                if !self.revealed { self.reveal() }
             case 18, 19, 20, 21:                        // 1–4
                 guard self.revealed else { handled = false; break }
                 let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy][event.keyCode]!
@@ -201,6 +207,16 @@ final class PracticeSession: ObservableObject {
             guard handled else { return event }
             panel.makeFirstResponder(nil)               // drop any text selection
             return nil
+        }
+        // Clicking the card takes the keys back from the assistant's box.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            if let self, AppState.shared.currentView == .practice, !self.editing,
+               let panel = PluckkPanel.shared, event.window === panel, panel.isAssistantOpen,
+               event.locationInWindow.x < panel.frame.width - PluckkPanel.assistantWidth,
+               let tv = panel.firstResponder as? NSTextView, tv.isEditable {
+                panel.makeFirstResponder(nil)
+            }
+            return event
         }
     }
 

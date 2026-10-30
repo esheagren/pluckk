@@ -223,6 +223,10 @@ class PluckkPanel: NSPanel {
         } completionHandler: {
             // Make panel key so buttons receive clicks
             self.makeKey()
+            // AppKit focuses the first text field it finds, which would be the assistant's box.
+            if self.isAssistantOpen, AppState.shared.currentView == .practice, !PracticeSession.shared.editing {
+                self.makeFirstResponder(nil)
+            }
         }
 
         updateHostingView()
