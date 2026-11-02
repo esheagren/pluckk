@@ -112,7 +112,7 @@ async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentif
     dueAt: sql<string>`min(${schema.cardReviewState.dueAt})`.as('due_at'),
     // Reviewed at least once; anything else is new to the person.
     seen: sql<boolean>`bool_or(${schema.cardReviewState.status} <> 'new')`.as('seen'),
-    interval: sql<number>`max(${schema.cardReviewState.intervalDays})`.as('interval_days'),
+    interval: sql<number>`max(${schema.cardReviewState.intervalDays})::float8`.as('interval_days'),   // numeric would arrive as a string
   }).from(schema.cardReviewState).where(eq(schema.cardReviewState.userId, userId)).groupBy(schema.cardReviewState.cardId).as('due');
   // ?state=new (never reviewed), due (reviewed and due now), seen (reviewed at least once).
   if (state === 'new') conds.push(sql`${due.seen} is not true`);
