@@ -22,6 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupDoubleCmdDetector()
         selectionReader = SelectionReader()
+        DeckFiler.shared.start()
 
         // Hide dock icon (we're a menu bar app)
         NSApp.setActivationPolicy(.accessory)
