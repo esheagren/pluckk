@@ -380,7 +380,7 @@ private struct RingArc: Shape {
 }
 
 
-/// Reviews ahead, day by day: what the decks will ask for if every review is rated Good and new
+/// Reviews ahead, a stacked bar a day: what the decks will ask for if every review is rated Good and new
 /// cards keep arriving at today's limits. Changing a limit on the ring changes it.
 struct WorkloadForecastView: View {
     @State private var days: [PluckkAPI.ForecastDay] = []
@@ -394,14 +394,14 @@ struct WorkloadForecastView: View {
         let series: String
     }
 
-    private static let series = ["Reviews of cards you know", "Reviews of cards you'll learn", "New cards", "Total"]
+    private static let series = ["Reviews of cards you know", "Reviews of cards you'll learn", "New cards"]
 
+    /// One bar a day, stacked: its height is the day's total.
     private var points: [Point] {
         days.flatMap { d in
             [Point(date: d.day, count: d.reviews, series: Self.series[0]),
              Point(date: d.day, count: d.learned, series: Self.series[1]),
-             Point(date: d.day, count: d.new, series: Self.series[2]),
-             Point(date: d.day, count: d.total, series: Self.series[3])]
+             Point(date: d.day, count: d.new, series: Self.series[2])]
         }
     }
 
@@ -425,17 +425,13 @@ struct WorkloadForecastView: View {
                     .frame(maxWidth: .infinity, minHeight: 200)
             } else {
                 Chart(points) { point in
-                    LineMark(x: .value("Day", point.date, unit: .day), y: .value("Cards", point.count))
+                    BarMark(x: .value("Day", point.date, unit: .day), y: .value("Cards", point.count))
                         .foregroundStyle(by: .value("Series", point.series))
-                        .lineStyle(StrokeStyle(lineWidth: point.series == "Total" ? 2.5 : 1.5,
-                                               dash: point.series == "New cards" ? [4, 3] : []))
-                        .interpolationMethod(.monotone)
                 }
                 .chartForegroundStyleScale([
                     Self.series[0]: Color(hex: "5b9bd5"),
                     Self.series[1]: Color(hex: "3fb950"),
                     Self.series[2]: Color(hex: "a371f7"),
-                    Self.series[3]: PluckkTheme.accent,
                 ])
                 .chartLegend(position: .bottom, alignment: .leading)
                 .chartXAxis {
