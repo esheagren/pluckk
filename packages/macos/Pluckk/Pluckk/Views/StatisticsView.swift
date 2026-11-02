@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 /// How new cards reach you: one daily total, shared out around a ring. Each deck sits beside its
 /// slice. The handles work like a slider with several thumbs laid round the ring: one grows the
@@ -51,6 +52,9 @@ struct StatisticsView: View {
                     if let calibration, calibration.reviews > 0 {
                         calibrationLine(calibration)
                     }
+
+                    WorkloadForecastView()
+                        .padding(.top, 18)
 
                     Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
                         .font(.system(size: 11))
@@ -372,5 +376,105 @@ private struct RingArc: Shape {
         path.addArc(center: CGPoint(x: rect.midX, y: rect.midY), radius: min(rect.width, rect.height) / 2,
                     startAngle: .degrees((start + gap) * 360 - 90), endAngle: .degrees((end - gap) * 360 - 90), clockwise: false)
         return path
+    }
+}
+
+
+/// Reviews ahead, day by day: what the decks will ask for if every review is rated Good and new
+/// cards keep arriving at today's limits. Changing a limit on the ring changes it.
+struct WorkloadForecastView: View {
+    @State private var days: [PluckkAPI.ForecastDay] = []
+    @State private var span = 30
+    @State private var failed = false
+
+    private struct Point: Identifiable {
+        let id = UUID()
+        let date: Date
+        let count: Int
+        let series: String
+    }
+
+    private static let series = ["Reviews of cards you know", "Reviews of cards you'll learn", "New cards", "Total"]
+
+    private var points: [Point] {
+        days.flatMap { d in
+            [Point(date: d.day, count: d.reviews, series: Self.series[0]),
+             Point(date: d.day, count: d.learned, series: Self.series[1]),
+             Point(date: d.day, count: d.new, series: Self.series[2]),
+             Point(date: d.day, count: d.total, series: Self.series[3])]
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Reviews ahead").font(.headline)
+                Spacer()
+                Picker("", selection: $span) {
+                    Text("30 days").tag(30)
+                    Text("90 days").tag(90)
+                    Text("6 months").tag(180)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            if days.isEmpty {
+                Text(failed ? "Couldn't load the forecast." : "Working it out…")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 200)
+            } else {
+                Chart(points) { point in
+                    LineMark(x: .value("Day", point.date, unit: .day), y: .value("Cards", point.count))
+                        .foregroundStyle(by: .value("Series", point.series))
+                        .lineStyle(StrokeStyle(lineWidth: point.series == "Total" ? 2.5 : 1.5,
+                                               dash: point.series == "New cards" ? [4, 3] : []))
+                        .interpolationMethod(.monotone)
+                }
+                .chartForegroundStyleScale([
+                    Self.series[0]: Color(hex: "5b9bd5"),
+                    Self.series[1]: Color(hex: "3fb950"),
+                    Self.series[2]: Color(hex: "a371f7"),
+                    Self.series[3]: PluckkTheme.accent,
+                ])
+                .chartLegend(position: .bottom, alignment: .leading)
+                .frame(height: 220)
+                summary
+            }
+            Text("Assumes every review is rated Good and new cards keep coming at today's limits. Misses (Again) add reviews, so treat it as a floor.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+        }
+        .task(id: span) { await load() }
+    }
+
+    private var summary: some View {
+        let week = days.prefix(7)
+        let weekAverage = week.isEmpty ? 0 : week.map(\.total).reduce(0, +) / week.count
+        let peak = days.max { $0.total < $1.total }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE d MMM"
+        return HStack(spacing: 18) {
+            stat("\(days.first?.total ?? 0)", "today")
+            stat("\(weekAverage)", "a day this week")
+            if let peak { stat("\(peak.total)", "peak, \(formatter.string(from: peak.day))") }
+            stat("\(days.map(\.new).reduce(0, +))", "new cards in \(span) days")
+        }
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.system(size: 17, weight: .semibold).monospacedDigit())
+            Text(label).font(.system(size: 11)).foregroundColor(.secondary)
+        }
+    }
+
+    private func load() async {
+        guard let token = AuthManager.shared.accessToken else { return }
+        do {
+            days = try await PluckkAPI.shared.forecast(token: token, days: span)
+            failed = false
+        } catch {
+            failed = true
+        }
     }
 }

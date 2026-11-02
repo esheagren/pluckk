@@ -91,11 +91,7 @@ struct AssistantView: View {
                     .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(PluckkTheme.accent.opacity(0.16)))
             }
         case .assistant:
-            Text(cardMarkdown(item.text))
-                .font(.system(size: 13))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            ChatMarkdown(text: item.text)
         case .tool:
             Text(item.text)
                 .font(.system(size: 11))
@@ -253,5 +249,137 @@ struct AssistantSettingsSection: View {
             .padding(6)
             .frame(height: height)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+    }
+}
+
+
+/// The assistant's replies as Markdown blocks: paragraphs, headings, bullet and numbered lists,
+/// tables and code. Inline styling (bold, italics, code, links) is handled inside each block.
+/// Partial blocks render as they stream in.
+struct ChatMarkdown: View {
+    let text: String
+
+    private enum Block {
+        case paragraph(String)
+        case heading(String)
+        case bullet(String, ordinal: String?)
+        case table(header: [String], rows: [[String]])
+        case code(String)
+    }
+
+    private var blocks: [Block] {
+        var out: [Block] = []
+        var paragraph: [String] = []
+        func flush() {
+            if !paragraph.isEmpty { out.append(.paragraph(paragraph.joined(separator: "\n"))); paragraph = [] }
+        }
+        let lines = text.components(separatedBy: "\n")
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                flush()
+                var code: [String] = []
+                i += 1
+                while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") { code.append(lines[i]); i += 1 }
+                out.append(.code(code.joined(separator: "\n")))
+            } else if trimmed.hasPrefix("|") {
+                flush()
+                var rows: [[String]] = []
+                while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                    let cells = Self.cells(lines[i])
+                    if !cells.allSatisfy({ $0.allSatisfy { "-: ".contains($0) } && !$0.isEmpty }) { rows.append(cells) }
+                    i += 1
+                }
+                if let header = rows.first { out.append(.table(header: header, rows: Array(rows.dropFirst()))) }
+                continue
+            } else if trimmed.isEmpty {
+                flush()
+            } else if let heading = trimmed.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
+                flush()
+                out.append(.heading(String(trimmed[heading.upperBound...])))
+            } else if let bullet = trimmed.range(of: #"^[-*•]\s+"#, options: .regularExpression) {
+                flush()
+                out.append(.bullet(String(trimmed[bullet.upperBound...]), ordinal: nil))
+            } else if let number = trimmed.range(of: #"^\d+[.)]\s+"#, options: .regularExpression) {
+                flush()
+                let ordinal = trimmed[number].trimmingCharacters(in: .whitespaces)
+                out.append(.bullet(String(trimmed[number.upperBound...]), ordinal: ordinal))
+            } else {
+                paragraph.append(line)
+            }
+            i += 1
+        }
+        flush()
+        return out
+    }
+
+    private static func cells(_ line: String) -> [String] {
+        var row = line.trimmingCharacters(in: .whitespaces)
+        if row.hasPrefix("|") { row.removeFirst() }
+        if row.hasSuffix("|") { row.removeLast() }
+        return row.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let text):
+                    inline(text)
+                case .heading(let text):
+                    inline(text).font(.system(size: 13, weight: .semibold)).padding(.top, 2)
+                case .bullet(let text, let ordinal):
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(ordinal ?? "•").font(.system(size: 13).monospacedDigit()).foregroundColor(.secondary)
+                        inline(text)
+                    }
+                    .padding(.leading, 2)
+                case .table(let header, let rows):
+                    table(header, rows)
+                case .code(let code):
+                    Text(code)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                }
+            }
+        }
+    }
+
+    private func inline(_ text: String) -> some View {
+        Text(cardMarkdown(text))
+            .font(.system(size: 13))
+            .lineSpacing(3)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func table(_ header: [String], _ rows: [[String]]) -> some View {
+        let columns = header.count
+        return Grid(alignment: .topLeading, horizontalSpacing: 10, verticalSpacing: 6) {
+            GridRow {
+                ForEach(0..<columns, id: \.self) { c in
+                    Text(cardMarkdown(header[c])).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                }
+            }
+            Divider()
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { c in
+                        Text(cardMarkdown(c < row.count ? row[c] : ""))
+                            .font(.system(size: 12.5))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if index < rows.count - 1 { Divider().opacity(0.5) }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
     }
 }

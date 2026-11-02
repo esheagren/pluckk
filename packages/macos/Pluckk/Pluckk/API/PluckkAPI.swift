@@ -320,6 +320,24 @@ class PluckkAPI {
         let caught: Int
     }
 
+    struct ForecastDay: Decodable, Identifiable {
+        let date: String
+        let reviews: Int
+        let learned: Int
+        let new: Int
+        var id: String { date }
+        var total: Int { reviews + learned + new }
+        var day: Date { ISO8601DateFormatter().date(from: date) ?? Date() }
+    }
+
+    /// The coming workload, day by day, if every review is rated Good.
+    func forecast(token: String, days: Int) async throws -> [ForecastDay] {
+        struct Response: Decodable { let days: [ForecastDay] }
+        let tz = TimeZone.current.secondsFromGMT() / 60
+        let data = try await send(token: token, method: "GET", path: "/api/v1/review/forecast?days=\(days)&tz=\(tz)")
+        return try JSONDecoder().decode(Response.self, from: data).days
+    }
+
     func calibration(token: String) async throws -> Calibration {
         let data = try await send(token: token, method: "GET", path: "/api/v1/review/calibration")
         return try JSONDecoder().decode(Calibration.self, from: data)

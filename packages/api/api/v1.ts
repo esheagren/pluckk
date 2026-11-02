@@ -17,11 +17,11 @@ import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { put } from '@vercel/blob';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, intervalScoreBodySchema, parseBody, patchCardBodySchema, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
-import { buildItems } from '../lib/review.js';
+import { buildItems, stateFromRow } from '../lib/review.js';
 import { loadEvents } from '../lib/store.js';
 import { Router, pathSegments, type RouteHandler } from '../lib/router.js';
 import { snake, pick, isoTimestamp } from '../lib/serialize.js';
@@ -269,6 +269,44 @@ router.on('POST', 'review', authed(async (req, res, user) => {
     reviewedAt: r.state.lastReviewedAt ?? new Date().toISOString(),
   });
   res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating });
+}));
+
+// The coming workload, day by day: reviews of cards seen before today, reviews of cards still to
+// come, and new cards. Assumes every review is rated Good and new cards arrive at each deck's
+// daily limit. ?days=1–365, ?tz=minutes east of UTC so days start at the person's midnight.
+router.on('GET', 'review/forecast', authed(async (req, res, user) => {
+  const days = Math.max(1, Math.min(365, Number(req.query?.days ?? 60) || 60));
+  const tz = Number(req.query?.tz ?? 0) || 0;
+  const now = new Date();
+  const local = now.getTime() + tz * 60000;
+  const start = new Date(local - (local % 86400000) - tz * 60000);
+  const db = getDb();
+  const settings = await getStudySettings(user.id);
+  const { folderRows, candidateRows, newToday } = await mixerContext(user.id);
+  const paused = new Set(folderRows.filter((f) => f.isPaused).map((f) => f.id));
+  const active = (f: string | null) => !(f && paused.has(f));
+
+  const rows = await db.select({ state: schema.cardReviewState, folderId: schema.cards.folderId })
+    .from(schema.cardReviewState)
+    .innerJoin(schema.cards, eq(schema.cards.id, schema.cardReviewState.cardId))
+    .where(and(eq(schema.cardReviewState.userId, user.id), eq(schema.cards.isDeleted, false)));
+  const states = rows.filter((r) => r.state.status !== 'new' && active(r.folderId)).map((r) => stateFromRow(r.state));
+
+  const unseen = new Map<string | null, number>();
+  for (const c of candidateRows) {
+    if ((!c.status || c.status === 'new') && active(c.folderId)) unseen.set(c.folderId, (unseen.get(c.folderId) ?? 0) + 1);
+  }
+  const decks = [...unseen].map(([f, count]) => ({
+    unseen: count,
+    perDay: (f ? folderRows.find((x) => x.id === f)?.newPerDay : null) ?? settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY,
+    usedToday: newToday.get(f) ?? 0,
+  }));
+
+  const forecast = forecastWorkload({ states, decks, days, start, now });
+  res.status(200).json({
+    start: start.toISOString(),
+    days: forecast.map((d) => ({ date: new Date(start.getTime() + d.day * 86400000).toISOString(), reviews: d.reviews, learned: d.learned, new: d.newCards })),
+  });
 }));
 
 // How often number-card ranges caught the answer: the 95% ranges should catch about 95%.
