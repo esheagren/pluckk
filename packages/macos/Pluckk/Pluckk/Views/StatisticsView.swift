@@ -16,6 +16,8 @@ struct StatisticsView: View {
     @State private var calibration: PluckkAPI.Calibration?
     /// The split the total is being scaled from, kept while only the total changes.
     @State private var totalBase: [String: Int]?
+    /// Bumped after each saved change to the limits, so the forecast below redoes itself.
+    @State private var savedRevision = 0
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
@@ -53,7 +55,7 @@ struct StatisticsView: View {
                         calibrationLine(calibration)
                     }
 
-                    WorkloadForecastView()
+                    WorkloadForecastView(revision: savedRevision)
                         .padding(.top, 18)
 
                     Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
@@ -311,6 +313,7 @@ struct StatisticsView: View {
             do {
                 try await save(changed, token: token)
                 notice = nil
+                savedRevision += 1
                 PracticeSession.shared.refreshTodayCounts()
             } catch {
                 notice = "Couldn't save that: \(error.localizedDescription)"
@@ -381,8 +384,10 @@ private struct RingArc: Shape {
 
 
 /// Reviews ahead, a stacked bar a day: what the decks will ask for if every review is rated Good and new
-/// cards keep arriving at today's limits. Changing a limit on the ring changes it.
+/// cards keep arriving at today's limits. It's redone each time a limit on the ring is saved.
 struct WorkloadForecastView: View {
+    /// Changes whenever the daily limits are saved; the forecast reloads with them.
+    var revision = 0
     @State private var days: [PluckkAPI.ForecastDay] = []
     @State private var span = 30
     @State private var failed = false
@@ -446,7 +451,7 @@ struct WorkloadForecastView: View {
             Text("Assumes every review is rated Good and new cards keep coming at today's limits. Misses (Again) add reviews, so treat it as a floor.")
                 .font(.system(size: 11)).foregroundColor(.secondary)
         }
-        .task(id: span) { await load() }
+        .task(id: "\(span)-\(revision)") { await load() }   // the old chart stays up until the new one arrives
     }
 
     private var summary: some View {
