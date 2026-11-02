@@ -225,10 +225,10 @@ final class PracticeSession: ObservableObject {
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // The reader is open: Esc goes back to the card, everything else (scrolling, copying) is its own.
-            if let self, self.reading != nil {
-                if event.keyCode == 53 { self.closeReader(); return nil }
-                return event
+            // Esc hides the card's source, when it's showing.
+            if let self, self.reading != nil, event.keyCode == 53 {
+                self.closeReader()
+                return nil
             }
             // ⌘+ / ⌘- / ⌘0: the size of the card's text.
             if let panel = PluckkPanel.shared, event.window === panel.hostWindow, AppState.shared.currentView == .practice {
@@ -311,14 +311,20 @@ final class PracticeSession: ObservableObject {
 
     @Published private(set) var reading: ReaderPassage?
 
+    /// Shows the card's source under it, or hides it if it's showing.
     func openReader(_ item: ReviewItem) {
+        if reading?.cardId == item.card_id { reading = nil; return }
         guard let source = item.bookSource else { return }
-        guard let opened = BookLibrary.passage(for: source) else {
+        guard let opened = BookLibrary.passage(for: source, cardId: item.card_id) else {
             notice = "\(source.book) isn't in your bookshelf corpus."
             return
         }
         reading = opened.passage
-        if !opened.found { notice = "Couldn't find this card's passage, so the chapter opens at the top." }
+        if !opened.found { notice = "Couldn't find this card's passage, so the chapter shows from its start." }
+        let id = opened.passage.id
+        Task {
+            if let page = await opened.passage.withPage(), reading?.id == id { reading?.page = page }
+        }
     }
 
     func closeReader() { reading = nil }
@@ -559,6 +565,7 @@ final class PracticeSession: ObservableObject {
         editing = false
         revealed = false
         outcome = nil
+        reading = nil
         shownAt = Date()
         if index >= queue.count { phase = .done }
         if celebrateAfterThisCard {
@@ -620,14 +627,6 @@ struct PracticeView: View {
             }
         }
         .overlay { if let zoomed { lightbox(zoomed) } }
-        .overlay {
-            if let reading = session.reading {
-                ReaderView(passage: reading) { session.closeReader() }
-                    .id(reading.id)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: session.reading?.id)
         .onAppear {
             session.installKeyMonitor()
             session.startIfNeeded()
@@ -673,7 +672,7 @@ struct PracticeView: View {
 
             // A card with an image fills the height so the image can use every spare point
             // (and grows with the panel); text-only cards scroll if they run long.
-            if imageShowing(item) {
+            if imageShowing(item) && session.reading == nil {
                 card(item)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
@@ -683,6 +682,11 @@ struct PracticeView: View {
                     ScrollView {
                         VStack(spacing: 14) {
                             card(item)
+                            if let reading = session.reading, reading.cardId == item.card_id {
+                                SourceExcerpt(passage: reading) { session.closeReader() }
+                                    .id(reading.id)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                             ForEach($splitCards) { splitCardEditor($0).id($0.wrappedValue.id) }
                             if session.editing { addCardButton.id("addCard") }
                         }
@@ -810,7 +814,7 @@ struct PracticeView: View {
                     Button(action: { session.openReader(item) }) {
                         HStack(spacing: 5) {
                             Image(systemName: "book").font(.system(size: 10))
-                            Text("Read in context · \(book.book)")
+                            Text(session.reading?.cardId == item.card_id ? "Hide the source" : "Read in context · \(book.book)")
                         }
                         .font(.system(size: 11))
                         .foregroundColor(mutedText)

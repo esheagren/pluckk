@@ -520,11 +520,15 @@ struct BookSource {
     let selection: String?
 
     init?(_ provenance: ReviewItem.Provenance?, selection: String?) {
-        guard let provenance, provenance.identifier?.hasPrefix("book:") == true,
-              let book = provenance.container_title, !book.isEmpty else { return nil }
+        self.init(book: provenance?.container_title, chapter: provenance?.title,
+                  selection: provenance?.selection ?? selection, identifier: provenance?.identifier)
+    }
+
+    init?(book: String?, chapter: String?, selection: String?, identifier: String?) {
+        guard identifier?.hasPrefix("book:") == true, let book, !book.isEmpty else { return nil }
         self.book = book
-        self.chapter = provenance.title
-        self.selection = provenance.selection ?? selection
+        self.chapter = chapter
+        self.selection = selection
     }
 }
 

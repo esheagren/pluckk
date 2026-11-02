@@ -236,7 +236,7 @@ private struct DeckCardsView: View {
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(reading == nil ? .cancelAction : nil)
+                .keyboardShortcut(.cancelAction)
 
                 Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
@@ -276,7 +276,13 @@ private struct DeckCardsView: View {
                                        onToggleRework: { toggleRework(card) },
                                        onMove: { move(card, to: $0) },
                                        onDelete: { delete(card) },
-                                       onRead: { read(card) })
+                                       onRead: { read(card) },
+                                       sourceShowing: reading?.cardId == card.id)
+                        if let reading, reading.cardId == card.id {
+                            SourceExcerpt(passage: reading) { self.reading = nil }
+                                .id(reading.id)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                     if !reachedEnd && search.isEmpty {
                         Color.clear.frame(height: 30).onAppear { loadMore() }
@@ -294,24 +300,23 @@ private struct DeckCardsView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .overlay {
-            if let reading {
-                ReaderView(passage: reading) { self.reading = nil }
-                    .id(reading.id)
-                    .transition(.opacity)
-            }
-        }
         .animation(.easeOut(duration: 0.15), value: reading?.id)
     }
 
+    /// Shows the card's source under it, or hides it if it's showing.
     private func read(_ card: LibraryCard) {
+        if reading?.cardId == card.id { reading = nil; return }
         guard let source = card.bookSource else { return }
-        guard let opened = BookLibrary.passage(for: source) else {
+        guard let opened = BookLibrary.passage(for: source, cardId: card.id) else {
             notice = "\(source.book) isn't in your bookshelf corpus."
             return
         }
-        notice = opened.found ? nil : "Couldn't find this card's passage, so the chapter opens at the top."
+        notice = opened.found ? nil : "Couldn't find this card's passage, so the chapter shows from its start."
         reading = opened.passage
+        let id = opened.passage.id
+        Task {
+            if let page = await opened.passage.withPage(), reading?.id == id { reading?.page = page }
+        }
     }
 
     private func loadMore() {
@@ -412,6 +417,7 @@ private struct LibraryCardRow: View {
     let onMove: (String?) -> Void
     let onDelete: () -> Void
     let onRead: () -> Void
+    let sourceShowing: Bool
 
     @State private var hovering = false
     @State private var editing = false
@@ -484,7 +490,7 @@ private struct LibraryCardRow: View {
             Button(action: onRead) {
                 HStack(spacing: 4) {
                     Image(systemName: "book").font(.system(size: 9))
-                    Text("Read in context · \(book.book)")
+                    Text(sourceShowing ? "Hide the source" : "Read in context · \(book.book)")
                 }
                 .font(.system(size: 11))
                 .foregroundColor(PluckkTheme.accent.opacity(0.85))

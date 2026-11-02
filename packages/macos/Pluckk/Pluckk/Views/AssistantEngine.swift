@@ -137,6 +137,8 @@ enum AssistantTools {
                  schema: object(["id": string, "marked": ["type": "boolean"] as [String: Any]], required: ["id", "marked"])),
         ToolSpec(name: "set_card_image", description: "Put an image you made with code on a card. Omit file_id to use the newest one. Erik is asked first if the card already has an image.",
                  schema: object(["id": string, "file_id": string], required: ["id"])),
+        ToolSpec(name: "read_card_source", description: "For a card made from a book in the corpus: the book, chapter, printed page (when the book's EPUB records pages), and the text around the card's passage, with the passage set off in «». Use it to explain or check a card against its source.",
+                 schema: object(["id": string, "paragraphs_around": integer], required: ["id"])),
         ToolSpec(name: "delete_card", description: "Delete a card. Erik is asked to approve first.",
                  schema: object(["id": string], required: ["id"])),
         ToolSpec(name: "list_files", description: "List a folder inside the allowed folders.",
@@ -169,6 +171,7 @@ enum AssistantTools {
         case "move_card": return "Moving a card"
         case "set_rework": return args["marked"] as? Bool == true ? "Marking a card for rework" : "Unmarking a card"
         case "set_card_image": return "Putting an image on a card"
+        case "read_card_source": return "Reading the card's source"
         case "delete_card": return "Deleting a card"
         case "list_files": return "Listing \(text("path"))"
         case "search_files": return "Searching files: \(text("query"))"
@@ -306,6 +309,26 @@ enum AssistantTools {
             cardCache = nil
             PracticeSession.shared.applyExternalImage(cardId: id, url: url)
             return "Image set on card \(id)."
+
+        case "read_card_source":
+            let id = try cardId()
+            guard let card = try await json(path: "/cards/\(id)") as? [String: Any],
+                  let provenance = card["provenance"] as? [String: Any],
+                  let source = BookSource(book: provenance["container_title"] as? String, chapter: provenance["title"] as? String,
+                                          selection: (provenance["selection"] as? String) ?? (card["source_selection"] as? String),
+                                          identifier: provenance["identifier"] as? String)
+            else { throw Failure(message: "That card doesn't come from a book.") }
+            guard let opened = BookLibrary.passage(for: source, cardId: id) else {
+                throw Failure(message: "\(source.book) isn't in the bookshelf corpus.")
+            }
+            let page = await opened.passage.withPage()
+            return ["Book: \(opened.passage.book.title)",
+                    "Chapter: \(opened.passage.chapterTitle)",
+                    "Printed page: " + (page.map { "p. \($0)" } ?? "not recorded in this edition"),
+                    opened.found ? "" : "(The passage itself wasn't found; this is the start of the chapter.)",
+                    "",
+                    opened.passage.excerpt(paragraphsAround: min(args["paragraphs_around"] as? Int ?? 3, 10))]
+                .joined(separator: "\n")
 
         case "delete_card":
             let id = try cardId()
@@ -555,6 +578,12 @@ final class AssistantSession: ObservableObject {
                 if let deck = card.folder?.name { lines.append("Deck: \(deck)") }
                 lines.append("Question: \(card.question)")
                 lines.append(practice.revealed ? "Answer (revealed): \(card.answer)" : "Answer: not revealed yet")
+                if let source = card.bookSource {
+                    lines.append("Source: \(source.book)" + (source.chapter.map { ", \($0)" } ?? "") + " (read_card_source gives the passage)")
+                }
+                if let reading = practice.reading, reading.cardId == card.card_id {
+                    lines.append("Erik has the source passage open under the card" + (reading.page.map { ", printed page \($0)" } ?? "") + ".")
+                }
             }
         case .generate:
             lines.append("View: Create")
