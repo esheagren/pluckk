@@ -212,9 +212,15 @@ class PluckkAPI {
 
     /// A card written by hand (no AI): a plain Q&A spec into a deck (nil = unfiled). Returns its id.
     func createManualCard(token: String, question: String, answer: String, folderId: String?, tags: [String],
-                          provenance: [String: String] = ["identifier": "app:pluckk/manual", "title": "Written by hand", "containerTitle": "Pluckk"]) async throws -> String {
+                          provenance: [String: String] = ["identifier": "app:pluckk/manual", "title": "Written by hand", "containerTitle": "Pluckk"],
+                          number: (value: Double, unit: String?)? = nil) async throws -> String {
+        var spec: [String: Any] = ["style": "qa", "question": question, "answer": answer]
+        if let number {
+            spec["answerType"] = "numeric"
+            spec["numeric"] = ["value": number.value, "unit": number.unit.map { $0 as Any } ?? NSNull()]
+        }
         let body: [String: Any] = [
-            "spec": ["style": "qa", "question": question, "answer": answer],
+            "spec": spec,
             "provenance": provenance,
             "folder_id": folderId.map { $0 as Any } ?? NSNull(),
             "tags": tags,
@@ -273,12 +279,42 @@ class PluckkAPI {
         let previews: IntervalPreviews
     }
 
-    func submitReview(token: String, item: ReviewItem, rating: ReviewRating, responseMs: Int) async throws -> ReviewResult {
-        let data = try await send(token: token, method: "POST", path: "/api/v1/review", json: [
+    /// `interval` is a number card's range; the server records it with the rating.
+    func submitReview(token: String, item: ReviewItem, rating: ReviewRating, responseMs: Int,
+                      interval: (lower: Double, upper: Double)? = nil) async throws -> ReviewResult {
+        var body: [String: Any] = [
             "card_id": item.card_id, "component_id": item.component_id,
             "rating": rating.rawValue, "response_time_ms": responseMs,
-        ])
+        ]
+        if let interval { body["interval"] = ["lower": interval.lower, "upper": interval.upper] }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review", json: body)
         return try JSONDecoder().decode(ReviewResult.self, from: data)
+    }
+
+    struct IntervalScore: Decodable {
+        let rating: ReviewRating
+        let contained: Bool
+        let lower: Double
+        let upper: Double
+        let answer: Double
+        let unit: String?
+    }
+
+    /// What a number card's range would be rated, without recording it.
+    func scoreInterval(token: String, cardId: String, lower: Double, upper: Double) async throws -> IntervalScore {
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/score",
+                                  json: ["card_id": cardId, "interval": ["lower": lower, "upper": upper]])
+        return try JSONDecoder().decode(IntervalScore.self, from: data)
+    }
+
+    struct Calibration: Decodable {
+        let reviews: Int
+        let caught: Int
+    }
+
+    func calibration(token: String) async throws -> Calibration {
+        let data = try await send(token: token, method: "GET", path: "/api/v1/review/calibration")
+        return try JSONDecoder().decode(Calibration.self, from: data)
     }
 
     /// Undo the rating with this event id; returns the item as it was before, when the server has it.
@@ -474,6 +510,9 @@ struct ReviewItem: Decodable, Identifiable {
     let component_count: Int
     var image_url: String?
     let source_url: String?
+    let answer_type: String?
+    let numeric_answer: Double?
+    let numeric_unit: String?
     var is_new: Bool
     var previews: IntervalPreviews
     let folder: Folder?
@@ -490,6 +529,17 @@ struct ReviewItem: Decodable, Identifiable {
     }
 
     var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
+
+    /// Answered with a 95% range rather than recalled and rated.
+    var isNumeric: Bool { answer_type == "numeric" && numeric_answer != nil }
+
+    /// The question as shown on a number card: an older "(90% interval)" note gives way to the
+    /// range input, which says 95%.
+    var shownQuestion: String {
+        guard isNumeric else { return question }
+        return question.replacingOccurrences(of: #"\s*\(\d+\s*%\s*(confidence\s*)?(interval|range|CI)\)"#,
+                                             with: "", options: [.regularExpression, .caseInsensitive])
+    }
 }
 
 /// A hand-made card can put its image on the question side; the tag records that choice
@@ -527,7 +577,7 @@ struct IntervalPreviews: Decodable {
     }
 }
 
-enum ReviewRating: String, CaseIterable {
+enum ReviewRating: String, CaseIterable, Decodable {
     case again, hard, good, easy, trivial
 
     var title: String { rawValue.capitalized }

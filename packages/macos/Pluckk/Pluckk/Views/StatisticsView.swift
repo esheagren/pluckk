@@ -12,6 +12,7 @@ struct StatisticsView: View {
     @State private var notice: String?
     @State private var drag: HandleDrag?
     @State private var hoveredHandle: Int?
+    @State private var calibration: PluckkAPI.Calibration?
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
@@ -44,6 +45,10 @@ struct StatisticsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     GeometryReader { geo in ringWithDecks(in: geo.size) }
                         .frame(height: max(440, outer.size.height - 70))
+
+                    if let calibration, calibration.reviews > 0 {
+                        calibrationLine(calibration)
+                    }
 
                     Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
                         .font(.system(size: 11))
@@ -312,8 +317,24 @@ struct StatisticsView: View {
         }
     }
 
+    /// How often 95% ranges on number cards caught the answer.
+    private func calibrationLine(_ c: PluckkAPI.Calibration) -> some View {
+        let rate = Int((Double(c.caught) / Double(c.reviews) * 100).rounded())
+        let advice = c.reviews < 10 ? "Too few yet to judge."
+            : rate < 88 ? "Below 95%: your ranges are too narrow."
+            : rate > 98 ? "Nearly always: your ranges could be tighter."
+            : "About right for 95%."
+        return VStack(spacing: 4) {
+            Text("Number cards").font(.system(size: 10, weight: .semibold)).tracking(0.7).foregroundColor(.secondary)
+            Text("Your 95% ranges caught \(c.caught) of \(c.reviews) answers (\(rate)%). \(advice)")
+                .font(.system(size: 13))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private func load() async {
         guard let token = AuthManager.shared.accessToken else { return }
+        calibration = try? await PluckkAPI.shared.calibration(token: token)
         do {
             async let summaries = PluckkAPI.shared.reviewDecks(token: token)
             async let fallback = PluckkAPI.shared.defaultNewPerDay(token: token)

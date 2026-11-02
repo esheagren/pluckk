@@ -245,7 +245,8 @@ final class PracticeSession: ObservableObject {
             // keys still belong to the card, so Space and 1–5 carry on after asking something.
             if let tv = panel.hostWindow.firstResponder as? NSTextView, tv.isEditable {
                 let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                guard blank, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
+                let answering = self.current?.isNumeric == true && !self.revealed   // typing a range
+                guard blank, !answering, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
             }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods.isEmpty else { return event }
@@ -253,7 +254,11 @@ final class PracticeSession: ObservableObject {
             var handled = true
             switch event.keyCode {
             case 49:                                    // Space
-                if !self.revealed { self.reveal() }
+                if self.current?.isNumeric == true && !self.revealed { handled = false }   // the range comes first
+                else if !self.revealed { self.reveal() }
+                else if let outcome = self.outcome { self.rate(outcome.rating) }
+            case 36, 76:                                // Return: keep a number card's suggested rating
+                if self.revealed, let outcome = self.outcome { self.rate(outcome.rating) } else { handled = false }
             case 18, 19, 20, 21, 23:                    // 1–5
                 guard self.revealed else { handled = false; break }
                 let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy, 23: .trivial][event.keyCode]!
@@ -282,8 +287,45 @@ final class PracticeSession: ObservableObject {
     func reveal() {
         guard current != nil, !revealed else { return }
         withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+        startSprintIfIdle()
+    }
+
+    private func startSprintIfIdle() {
         if !SessionTimer.shared.isRunning && !autoStartSuppressed && !timesUp {
             SessionTimer.shared.start()
+        }
+    }
+
+    // MARK: Number cards
+
+    /// A number card's range against its answer, and the rating that suggests. Rating with any
+    /// key or button records the range alongside.
+    struct IntervalOutcome {
+        let lower: Double
+        let upper: Double
+        let answer: Double
+        let unit: String?
+        let rating: ReviewRating
+        let contained: Bool
+    }
+    @Published private(set) var outcome: IntervalOutcome?
+
+    func lockInterval(_ lower: Double, _ upper: Double) {
+        guard let item = current, item.isNumeric, !revealed, !busy, let token = AuthManager.shared.accessToken else { return }
+        busy = true
+        notice = nil
+        Task {
+            defer { busy = false }
+            do {
+                let score = try await PluckkAPI.shared.scoreInterval(token: token, cardId: item.card_id, lower: lower, upper: upper)
+                guard current?.id == item.id else { return }
+                outcome = IntervalOutcome(lower: score.lower, upper: score.upper, answer: score.answer, unit: score.unit,
+                                          rating: score.rating, contained: score.contained)
+                withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+                startSprintIfIdle()
+            } catch {
+                notice = "Couldn't check that range: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -295,7 +337,8 @@ final class PracticeSession: ObservableObject {
         Task {
             defer { busy = false }
             do {
-                let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed)
+                let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed,
+                                                                     interval: outcome.map { ($0.lower, $0.upper) })
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
                 reviewedCount += 1
                 if rating == .again {
@@ -476,6 +519,7 @@ final class PracticeSession: ObservableObject {
     private func advance() {
         editing = false
         revealed = false
+        outcome = nil
         shownAt = Date()
         if index >= queue.count { phase = .done }
         if celebrateAfterThisCard {
@@ -667,7 +711,7 @@ struct PracticeView: View {
         .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !session.editing else { return }
+            guard !session.editing, !(item.isNumeric && !session.revealed) else { return }
             PluckkPanel.shared?.hostWindow.makeFirstResponder(nil)   // a click on the card clears a selection
             session.reveal()
         }
@@ -681,7 +725,7 @@ struct PracticeView: View {
 
     private func cardContent(_ item: ReviewItem) -> some View {
         VStack(spacing: 16) {
-            Text(cardMarkdown(item.question))
+            Text(cardMarkdown(item.shownQuestion))
                 .textSelection(.enabled)
                 .font(.system(size: fittedSize(item.question), weight: .semibold))
                 .foregroundColor(primaryText)
@@ -693,7 +737,13 @@ struct PracticeView: View {
                 cardImage(url)
             }
 
+            if item.isNumeric && !session.revealed {
+                IntervalEntry(unit: item.numeric_unit, busy: session.busy) { session.lockInterval($0, $1) }
+                    .padding(.top, 6)
+            }
+
             if session.revealed {
+                if let outcome = session.outcome { IntervalReveal(outcome: outcome).padding(.top, 4) }
                 Rectangle().fill(rule).frame(height: 1)
                 Text(cardMarkdown(item.answer))
                     .textSelection(.enabled)
@@ -909,12 +959,26 @@ struct PracticeView: View {
                 .disabled(session.busy)
             }
         } else if session.revealed {
-            HStack(spacing: 8) {
-                ForEach(ReviewRating.allCases, id: \.self) { rating in
-                    RatingButton(rating: rating, interval: item.previews.label(for: rating)) { session.rate(rating) }
-                        .disabled(session.busy)
+            VStack(spacing: 8) {
+                if let outcome = session.outcome {
+                    Text("Your range suggests \(outcome.rating.title). Space or ↩ keeps it, or pick another.")
+                        .font(.system(size: 12))
+                        .foregroundColor(mutedText)
+                }
+                HStack(spacing: 8) {
+                    ForEach(ReviewRating.allCases, id: \.self) { rating in
+                        RatingButton(rating: rating, interval: item.previews.label(for: rating),
+                                     suggested: session.outcome?.rating == rating) { session.rate(rating) }
+                            .disabled(session.busy)
+                    }
                 }
             }
+        } else if item.isNumeric {
+            Button("Show the answer without a range") { session.reveal() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(mutedText)
+                .frame(maxWidth: .infinity)
         } else {
             Button(action: { session.reveal() }) {
                 HStack(spacing: 8) {
@@ -1156,6 +1220,8 @@ struct CardIconButton: View {
 struct RatingButton: View {
     let rating: ReviewRating
     let interval: String
+    /// The rating a number card's range suggests.
+    var suggested = false
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.colorScheme) private var colorScheme
@@ -1190,8 +1256,8 @@ struct RatingButton: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(hovering ? tint.opacity(0.8) : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder),
-                            lineWidth: 1)
+                    .stroke(suggested ? tint : hovering ? tint.opacity(0.8) : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder),
+                            lineWidth: suggested ? 2 : 1)
             )
             .contentShape(Rectangle())
             .opacity(isEnabled ? 1 : 0.5)

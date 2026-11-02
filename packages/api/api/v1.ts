@@ -17,10 +17,10 @@ import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { put } from '@vercel/blob';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, createCardBodySchema, parseBody, patchCardBodySchema, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, intervalScoreBodySchema, parseBody, patchCardBodySchema, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
-import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder } from '../lib/cards.js';
+import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
 import { buildItems } from '../lib/review.js';
 import { loadEvents } from '../lib/store.js';
 import { Router, pathSegments, type RouteHandler } from '../lib/router.js';
@@ -224,24 +224,60 @@ router.on('GET', 'review/queue', authed(async (_req, res, user) => {
 
 // The server schedules (card.review → reducer → scheduler). `new_state` from older clients is
 // accepted and ignored. review_logs stays as an analytics mirror until step 8.
+/** A number card's answer and unit, or null when the card isn't one. */
+async function numericAnswer(userId: string, cardId: string) {
+  const spec = specOf(await getCardRow(getDb(), userId, cardId));
+  if (!('answerType' in spec) || spec.answerType !== 'numeric' || spec.numeric?.value == null) return null;
+  return { value: spec.numeric.value, unit: spec.numeric.unit ?? null };
+}
+
+router.on('POST', 'review/score', authed(async (req, res, user) => {
+  const parsed = parseBody(intervalScoreBodySchema, req.body);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+  const answer = await numericAnswer(user.id, parsed.data.card_id);
+  if (!answer) { res.status(400).json({ error: 'Not a number card' }); return; }
+  const outcome = rateInterval(answer.value, parsed.data.interval.lower, parsed.data.interval.upper, answer.unit);
+  res.status(200).json({ ...snake<Record<string, unknown>>(outcome), answer: answer.value, unit: answer.unit });
+}));
+
 router.on('POST', 'review', authed(async (req, res, user) => {
   const parsed = parseBody(reviewSubmitBodySchema, req.body);
   if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
   const body = parsed.data;
   const db = getDb();
-  const r = await reviewCard(db, user.id, body.card_id, body.rating, {
+  // A range is scored against the card's number; an explicit rating overrides the score.
+  const answer = body.interval ? await numericAnswer(user.id, body.card_id) : null;
+  if (body.interval && !answer) { res.status(400).json({ error: 'Not a number card' }); return; }
+  const outcome = body.interval && answer ? rateInterval(answer.value, body.interval.lower, body.interval.upper, answer.unit) : null;
+  const rating = body.rating ?? outcome?.rating;
+  if (!rating) { res.status(400).json({ error: 'rating or interval required' }); return; }
+  const r = await reviewCard(db, user.id, body.card_id, rating, {
     componentId: body.component_id ?? MAIN_COMPONENT, sessionId: body.session_id ?? null, responseMs: body.response_time_ms ?? null,
   });
   await db.insert(schema.reviewLogs).values({
-    cardReviewStateId: r.state.id, userId: user.id, cardId: body.card_id, reviewMode: 'standard', rating: body.rating,
+    cardReviewStateId: r.state.id, userId: user.id, cardId: body.card_id, reviewMode: outcome ? 'numeric_interval' : 'standard', rating,
     responseTimeMs: body.response_time_ms ?? null,
+    ...(outcome && answer ? {
+      responseLower: outcome.lower, responseUpper: outcome.upper, correctAnswer: answer.value, containedAnswer: outcome.contained,
+      intervalWidth: outcome.upper - outcome.lower, relativeWidth: outcome.relativeWidth, confidenceLevelUsed: INTERVAL_CONFIDENCE,
+      derivedRating: outcome.rating,
+    } : {}),
     previousStatus: r.previous?.status ?? 'new', previousInterval: r.previous?.intervalDays ?? 0, previousEase: r.previous?.easeFactor ?? 2.5,
     previousDue: r.previous?.dueAt ?? null,
     newStatus: r.state.status, newInterval: r.state.intervalDays, newEase: r.state.easeFactor, newDue: r.state.dueAt,
     algorithmVersion: `core:${SCHEDULER_ID}`,
     reviewedAt: r.state.lastReviewedAt ?? new Date().toISOString(),
   });
-  res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId });
+  res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating });
+}));
+
+// How often number-card ranges caught the answer: the 95% ranges should catch about 95%.
+router.on('GET', 'review/calibration', authed(async (_req, res, user) => {
+  const r = await getDb().execute(sql`
+    select count(*)::int as reviews, count(*) filter (where contained_answer)::int as caught
+    from review_logs where user_id = ${user.id} and review_mode = 'numeric_interval'`);
+  const row = (r.rows[0] ?? { reviews: 0, caught: 0 }) as { reviews: number; caught: number };
+  res.status(200).json({ ...row, confidence: INTERVAL_CONFIDENCE });
 }));
 
 // ---------------------------------------------------------------- review mixer

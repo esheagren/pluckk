@@ -15,12 +15,17 @@ struct NewCardView: View {
     @State private var notice: String?
     @State private var savedFlash = false
     @State private var focusTrigger = 0
+    /// A number card: answered in Practice with a 95% range.
+    @State private var isNumber = false
+    @State private var numberValue = ""
+    @State private var numberUnit = ""
     @Environment(\.colorScheme) private var colorScheme
 
     private var isDark: Bool { colorScheme == .dark }
     private var canSave: Bool {
         !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !saving
+            && (!isNumber || NumberText.parse(numberValue) != nil)
     }
 
     var body: some View {
@@ -39,6 +44,8 @@ struct NewCardView: View {
                 Text("**bold**   *italic*   `code`")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
+
+                numberSection
 
                 imageSection
 
@@ -86,6 +93,28 @@ struct NewCardView: View {
         .labelsHidden()
         .fixedSize()
         .help("Deck for new cards (remembered)")
+    }
+
+    // MARK: Number
+
+    private var numberSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("The answer is a number (answered with a 95% range)", isOn: $isNumber)
+                .font(.system(size: 12))
+            if isNumber {
+                HStack(spacing: 8) {
+                    TextField("Value, e.g. 34 or 2.5 billion", text: $numberValue)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                    TextField("Unit, e.g. GJ or %", text: $numberUnit)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    if !numberValue.isEmpty && NumberText.parse(numberValue) == nil {
+                        Text("Not a number").font(.system(size: 11)).foregroundColor(.red)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: Image
@@ -155,12 +184,15 @@ struct NewCardView: View {
         let folder = deckId.isEmpty ? nil : deckId
         let tags = (image != nil && imageOnQuestion) ? [ImageSide.questionTag] : []
         let imageData = image.flatMap(cardImageJPEG)
+        let unit = numberUnit.trimmingCharacters(in: .whitespaces)
+        let number = isNumber ? NumberText.parse(numberValue).map { (value: $0, unit: unit.isEmpty ? nil : unit) } : nil
         saving = true
         notice = nil
         Task {
             defer { saving = false }
             do {
-                let id = try await PluckkAPI.shared.createManualCard(token: token, question: q, answer: a, folderId: folder, tags: tags)
+                let id = try await PluckkAPI.shared.createManualCard(token: token, question: q, answer: a, folderId: folder, tags: tags,
+                                                                     number: number)
                 if let imageData {
                     do {
                         try await PluckkAPI.shared.uploadCardImage(token: token, cardId: id, imageData: imageData, mimeType: "image/jpeg")
@@ -182,6 +214,9 @@ struct NewCardView: View {
         answer = ""
         image = nil
         imageOnQuestion = false
+        isNumber = false
+        numberValue = ""
+        numberUnit = ""
         if !keepDeck { deckId = "" }
         focusTrigger += 1
     }

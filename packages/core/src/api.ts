@@ -94,16 +94,24 @@ export const patchCardBodySchema = z.object({
   image_url: z.string().nullish(),
   source_url: z.string().nullish(),
   source_title: z.string().nullish(),
+  // Turning a card into a number card, or back: answer_type 'numeric' with its value and unit.
+  answer_type: z.string().nullish(),
+  numeric_answer: z.number().nullish(),
+  numeric_unit: z.string().nullish(),
 });
 export type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 
 // ---------------------------------------------------------------- review
 
 /** POST review. `new_state` is the legacy client-computed state; once step 3 lands the server computes it and ignores the field. */
+const intervalSchema = z.object({ lower: z.number().finite(), upper: z.number().finite() });
+
+/** POST review. A number card can send its range instead of (or as well as) a rating. */
 export const reviewSubmitBodySchema = z.object({
   card_id: z.string().uuid(),
   component_id: z.string().min(1).optional(),
-  rating: ratingSchema,
+  rating: ratingSchema.optional(),
+  interval: intervalSchema.optional(),
   session_id: z.string().nullish(),
   response_time_ms: z.number().int().nonnegative().nullish(),
   algorithm_version: z.string().nullish(),
@@ -115,6 +123,9 @@ export const reviewSubmitBodySchema = z.object({
   }).optional(),
 });
 export type ReviewSubmitBody = z.infer<typeof reviewSubmitBodySchema>;
+
+/** POST review/score: what a range would be rated, without recording anything. */
+export const intervalScoreBodySchema = z.object({ card_id: z.string().uuid(), interval: intervalSchema });
 
 export const reviewUndoBodySchema = z.object({ event_id: z.string().uuid() });
 export type ReviewUndoBody = z.infer<typeof reviewUndoBodySchema>;
