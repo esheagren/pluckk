@@ -501,11 +501,31 @@ struct LibraryCard: Decodable, Identifiable {
     let due_at: String?
     var folder_id: String?
     var tags: [String]?
+    let provenance: ReviewItem.Provenance?
+    let source_selection: String?
+    let source_url: String?
+
+    var bookSource: BookSource? { BookSource(provenance, selection: source_selection) }
 
     var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
 
     /// Two-way and list cards have several components; the API edits those only by full spec.
     var isSimple: Bool { style != "qa_bidirectional" && style != "cloze_list" }
+}
+
+/// A card made from a book: the book's title, its chapter, and the supporting passage, for the reader.
+struct BookSource {
+    let book: String
+    let chapter: String?
+    let selection: String?
+
+    init?(_ provenance: ReviewItem.Provenance?, selection: String?) {
+        guard let provenance, provenance.identifier?.hasPrefix("book:") == true,
+              let book = provenance.container_title, !book.isEmpty else { return nil }
+        self.book = book
+        self.chapter = provenance.title
+        self.selection = provenance.selection ?? selection
+    }
 }
 
 /// One component of one card, as dealt by /api/v1/review/session (snake_case on the wire).
@@ -531,12 +551,7 @@ struct ReviewItem: Decodable, Identifiable {
         let selection: String?
     }
 
-    /// A card made from a book: the book's title and the supporting passage, for the reader.
-    var bookSource: (book: String, chapter: String?, selection: String?)? {
-        guard let provenance, provenance.identifier?.hasPrefix("book:") == true,
-              let book = provenance.container_title, !book.isEmpty else { return nil }
-        return (book, provenance.title, provenance.selection ?? source_selection)
-    }
+    var bookSource: BookSource? { BookSource(provenance, selection: source_selection) }
     var is_new: Bool
     var previews: IntervalPreviews
     let folder: Folder?

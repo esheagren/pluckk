@@ -121,6 +121,20 @@ enum BookLibrary {
     }
 }
 
+extension BookLibrary {
+    /// The reader opened on a card's passage: nil when the book isn't in the corpus; `found` is
+    /// false when the passage couldn't be matched, and the chapter then opens at its top.
+    static func passage(for source: BookSource) -> (passage: ReaderPassage, found: Bool)? {
+        guard let book = book(titled: source.book) else { return nil }
+        let hit = source.selection.flatMap { book.locate($0) }
+        // The passage's place decides the chapter; failing that, the chapter title the card names.
+        let chapter = hit.flatMap { book.chapterIndex(at: $0.start) }
+            ?? source.chapter.flatMap { title in book.chapters.firstIndex { title.hasPrefix($0.title) || $0.title.hasPrefix(title) } }
+            ?? 0
+        return (ReaderPassage(book: book, chapter: chapter, highlight: hit), hit != nil)
+    }
+}
+
 /// What the reader shows: a book, the chapter on screen, and the passage to highlight.
 struct ReaderPassage: Identifiable {
     let id = UUID()
@@ -176,6 +190,7 @@ struct ReaderView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+                .background(Button("", action: onClose).keyboardShortcut(.cancelAction).opacity(0))
             Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
             ScrollViewReader { proxy in
                 ScrollView {

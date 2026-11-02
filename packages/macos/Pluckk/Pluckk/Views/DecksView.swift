@@ -216,6 +216,7 @@ private struct DeckCardsView: View {
     @State private var error: String?
     @State private var search = ""
     @State private var notice: String?
+    @State private var reading: ReaderPassage?
 
     private var shown: [LibraryCard] {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -235,7 +236,7 @@ private struct DeckCardsView: View {
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
+                .keyboardShortcut(reading == nil ? .cancelAction : nil)
 
                 Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
@@ -274,7 +275,8 @@ private struct DeckCardsView: View {
                                        onSave: { q, a in save(card, q, a) },
                                        onToggleRework: { toggleRework(card) },
                                        onMove: { move(card, to: $0) },
-                                       onDelete: { delete(card) })
+                                       onDelete: { delete(card) },
+                                       onRead: { read(card) })
                     }
                     if !reachedEnd && search.isEmpty {
                         Color.clear.frame(height: 30).onAppear { loadMore() }
@@ -292,6 +294,24 @@ private struct DeckCardsView: View {
             }
             .scrollIndicators(.hidden)
         }
+        .overlay {
+            if let reading {
+                ReaderView(passage: reading) { self.reading = nil }
+                    .id(reading.id)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: reading?.id)
+    }
+
+    private func read(_ card: LibraryCard) {
+        guard let source = card.bookSource else { return }
+        guard let opened = BookLibrary.passage(for: source) else {
+            notice = "\(source.book) isn't in your bookshelf corpus."
+            return
+        }
+        notice = opened.found ? nil : "Couldn't find this card's passage, so the chapter opens at the top."
+        reading = opened.passage
     }
 
     private func loadMore() {
@@ -391,6 +411,7 @@ private struct LibraryCardRow: View {
     let onToggleRework: () -> Void
     let onMove: (String?) -> Void
     let onDelete: () -> Void
+    let onRead: () -> Void
 
     @State private var hovering = false
     @State private var editing = false
@@ -429,6 +450,7 @@ private struct LibraryCardRow: View {
                             .textSelection(.enabled)
                             .foregroundColor(.secondary)
                             .lineLimit(2)
+                        sourceLink
                     }
                     Spacer(minLength: 4)
                     if card.isMarkedForRework && !(hovering || confirmingDelete) {
@@ -453,6 +475,34 @@ private struct LibraryCardRow: View {
                 .stroke((isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder).opacity(0.6), lineWidth: 1)
         )
         .onHover { hovering = $0 }
+    }
+
+    /// Where the card came from: its passage in the book, or the page it was captured on.
+    @ViewBuilder
+    private var sourceLink: some View {
+        if let book = card.bookSource {
+            Button(action: onRead) {
+                HStack(spacing: 4) {
+                    Image(systemName: "book").font(.system(size: 9))
+                    Text("Read in context · \(book.book)")
+                }
+                .font(.system(size: 11))
+                .foregroundColor(PluckkTheme.accent.opacity(0.85))
+            }
+            .buttonStyle(.plain)
+            .help("Open the passage this card came from, in its chapter")
+        } else if let source = card.source_url, let url = URL(string: source), url.scheme?.hasPrefix("http") == true {
+            Button(action: { NSWorkspace.shared.open(url) }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "link").font(.system(size: 9))
+                    Text("Source · \(url.host ?? source)")
+                }
+                .font(.system(size: 11))
+                .foregroundColor(PluckkTheme.accent.opacity(0.85))
+            }
+            .buttonStyle(.plain)
+            .help(source)
+        }
     }
 
     @ViewBuilder

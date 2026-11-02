@@ -313,17 +313,12 @@ final class PracticeSession: ObservableObject {
 
     func openReader(_ item: ReviewItem) {
         guard let source = item.bookSource else { return }
-        guard let book = BookLibrary.book(titled: source.book) else {
+        guard let opened = BookLibrary.passage(for: source) else {
             notice = "\(source.book) isn't in your bookshelf corpus."
             return
         }
-        let found = source.selection.flatMap { book.locate($0) }
-        // The passage's place decides the chapter; failing that, the chapter title the card names.
-        let chapter = found.flatMap { book.chapterIndex(at: $0.start) }
-            ?? source.chapter.flatMap { title in book.chapters.firstIndex { title.hasPrefix($0.title) || $0.title.hasPrefix(title) } }
-            ?? 0
-        reading = ReaderPassage(book: book, chapter: chapter, highlight: found)
-        if found == nil { notice = "Couldn't find this card's passage, so the chapter opens at the top." }
+        reading = opened.passage
+        if !opened.found { notice = "Couldn't find this card's passage, so the chapter opens at the top." }
     }
 
     func closeReader() { reading = nil }
