@@ -327,7 +327,13 @@ class PluckkAPI {
         let new: Int
         var id: String { date }
         var total: Int { reviews + learned + new }
-        var day: Date { ISO8601DateFormatter().date(from: date) ?? Date() }
+        /// The server's dates carry milliseconds ("…T05:00:00.000Z"), which the default parser refuses.
+        var day: Date { Self.parser.date(from: date) ?? Date() }
+        private static let parser: ISO8601DateFormatter = {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f
+        }()
     }
 
     /// The coming workload, day by day, if every review is rated Good.

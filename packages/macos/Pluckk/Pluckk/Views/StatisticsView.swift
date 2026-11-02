@@ -438,6 +438,12 @@ struct WorkloadForecastView: View {
                     Self.series[3]: PluckkTheme.accent,
                 ])
                 .chartLegend(position: .bottom, alignment: .leading)
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .day, count: max(1, span / 6))) { _ in
+                        AxisGridLine()
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                    }
+                }
                 .frame(height: 220)
                 summary
             }
