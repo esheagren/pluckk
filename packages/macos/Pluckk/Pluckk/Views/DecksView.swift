@@ -557,7 +557,7 @@ private struct LibraryCardRow: View {
 
 /// Practise one deck: switch to Practice with a session from just that deck.
 @MainActor
-private func practise(_ deck: DeckSummary) {
+func practise(_ deck: DeckSummary) {
     PracticeSession.shared.practice(deck: deck)
     AppState.shared.currentView = .practice
 }

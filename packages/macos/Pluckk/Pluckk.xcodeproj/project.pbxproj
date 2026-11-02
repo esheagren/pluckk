@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		033 /* DeckBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 135 /* DeckBrowser.swift */; };
 		032 /* DeckFiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134 /* DeckFiler.swift */; };
 		031 /* BookReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133 /* BookReader.swift */; };
 		030 /* NumberCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132 /* NumberCardViews.swift */; };
@@ -43,6 +44,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		135 /* DeckBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeckBrowser.swift; sourceTree = "<group>"; };
 		134 /* DeckFiler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeckFiler.swift; sourceTree = "<group>"; };
 		133 /* BookReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookReader.swift; sourceTree = "<group>"; };
 		132 /* NumberCardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberCardViews.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				135 /* DeckBrowser.swift */,
 				134 /* DeckFiler.swift */,
 				133 /* BookReader.swift */,
 				132 /* NumberCardViews.swift */,
@@ -294,6 +297,7 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				033 /* DeckBrowser.swift in Sources */,
 				032 /* DeckFiler.swift in Sources */,
 				031 /* BookReader.swift in Sources */,
 				030 /* NumberCardViews.swift in Sources */,

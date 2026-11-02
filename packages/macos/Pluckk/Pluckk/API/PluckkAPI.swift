@@ -395,10 +395,11 @@ class PluckkAPI {
     }
 
     /// One page of a deck's cards, newest first. `folderId` nil = unfiled.
-    func cards(token: String, folderId: String?, limit: Int, offset: Int) async throws -> [LibraryCard] {
+    /// `state` narrows to "new" (never reviewed), "due" (reviewed, due now) or "seen" (reviewed).
+    func cards(token: String, folderId: String?, limit: Int, offset: Int, state: String? = nil) async throws -> [LibraryCard] {
         let folder = folderId ?? "unfiled"
         let data = try await send(token: token, method: "GET",
-                                  path: "/api/v1/cards?folder_id=\(folder)&limit=\(limit)&offset=\(offset)")
+                                  path: "/api/v1/cards?folder_id=\(folder)&limit=\(limit)&offset=\(offset)" + (state.map { "&state=\($0)" } ?? ""))
         return try JSONDecoder().decode([LibraryCard].self, from: data)
     }
 
@@ -528,6 +529,10 @@ struct LibraryCard: Decodable, Identifiable {
     let provenance: ReviewItem.Provenance?
     let source_selection: String?
     let source_url: String?
+    /// Reviewed at least once, and the longest interval among its parts, in days.
+    let seen: Bool?
+    let interval_days: Double?
+    let answer_type: String?
 
     var bookSource: BookSource? { BookSource(provenance, selection: source_selection) }
 

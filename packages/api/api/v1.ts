@@ -96,7 +96,8 @@ function publicUser(u: schema.User) {
 /** `folderId` narrows to one deck ('unfiled' = no deck), `tag` to cards carrying that tag;
  *  `page` slices the newest-first list. */
 async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentifier?: string,
-                         folderId?: string, page?: { limit: number; offset: number }, tag?: string) {
+                         folderId?: string, page?: { limit: number; offset: number }, tag?: string,
+                         state?: 'new' | 'due' | 'seen') {
   const db = getDb();
   const conds = [eq(schema.cards.userId, userId), eq(schema.cards.isDeleted, false)];
   if (sourceUrlPrefix) conds.push(like(schema.cards.sourceUrl, sourceUrlPrefix.replace(/[%_]/g, '\\$&') + '%'));
@@ -109,17 +110,27 @@ async function listCards(userId: string, sourceUrlPrefix?: string, sourceIdentif
   const due = db.select({
     cardId: schema.cardReviewState.cardId,
     dueAt: sql<string>`min(${schema.cardReviewState.dueAt})`.as('due_at'),
+    // Reviewed at least once; anything else is new to the person.
+    seen: sql<boolean>`bool_or(${schema.cardReviewState.status} <> 'new')`.as('seen'),
+    interval: sql<number>`max(${schema.cardReviewState.intervalDays})`.as('interval_days'),
   }).from(schema.cardReviewState).where(eq(schema.cardReviewState.userId, userId)).groupBy(schema.cardReviewState.cardId).as('due');
+  // ?state=new (never reviewed), due (reviewed and due now), seen (reviewed at least once).
+  if (state === 'new') conds.push(sql`${due.seen} is not true`);
+  if (state === 'due') conds.push(sql`${due.seen} is true and ${due.dueAt} <= now()`);
+  if (state === 'seen') conds.push(sql`${due.seen} is true`);
   const rows = await db
-    .select({ card: schema.cards, folder: schema.folders, dueAt: due.dueAt })
+    .select({ card: schema.cards, folder: schema.folders, dueAt: due.dueAt, seen: due.seen, interval: due.interval })
     .from(schema.cards)
     .leftJoin(schema.folders, eq(schema.cards.folderId, schema.folders.id))
     .leftJoin(due, eq(due.cardId, schema.cards.id))
     .where(and(...conds))
-    .orderBy(desc(schema.cards.createdAt))
+    .orderBy(...(state === 'due' ? [sql`${due.dueAt} asc`] : [desc(schema.cards.createdAt)]))
     .limit(page?.limit ?? Number.MAX_SAFE_INTEGER)
     .offset(page?.offset ?? 0);
-  return rows.map((r) => ({ ...snake<Record<string, unknown>>(r.card), folder: r.folder ? snake(r.folder) : null, due_at: r.dueAt ? isoTimestamp(r.dueAt) : null }));
+  return rows.map((r) => ({
+    ...snake<Record<string, unknown>>(r.card), folder: r.folder ? snake(r.folder) : null,
+    due_at: r.dueAt ? isoTimestamp(r.dueAt) : null, seen: r.seen === true, interval_days: r.interval ?? null,
+  }));
 }
 
 router.on('GET', 'cards', authed(async (req, res, user) => {
@@ -137,7 +148,8 @@ router.on('GET', 'cards', authed(async (req, res, user) => {
     ? { limit: Math.min(limit, 500), offset: Number.isInteger(offset) && offset > 0 ? offset : 0 }
     : undefined;
   const tag = typeof req.query.tag === 'string' && req.query.tag ? req.query.tag : undefined;
-  res.status(200).json(await listCards(user.id, prefix, source, folder, page, tag));
+  const state = ['new', 'due', 'seen'].includes(String(req.query.state)) ? (req.query.state as 'new' | 'due' | 'seen') : undefined;
+  res.status(200).json(await listCards(user.id, prefix, source, folder, page, tag, state));
 }));
 
 // Creates through the diary (card.ingest). Accepts the new {spec, provenance} form and the

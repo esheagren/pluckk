@@ -18,6 +18,8 @@ struct StatisticsView: View {
     @State private var totalBase: [String: Int]?
     /// Bumped after each saved change to the limits, so the forecast below redoes itself.
     @State private var savedRevision = 0
+    /// The deck whose cards are open in the panel on the right.
+    @State private var openDeck: DeckSummary?
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
@@ -68,6 +70,19 @@ struct StatisticsView: View {
             .scrollIndicators(.hidden)
         }
         .task { await load() }
+        .overlay(alignment: .trailing) {
+            if let deck = openDeck {
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        DeckBrowserPanel(deck: deck) { withAnimation(.easeOut(duration: 0.2)) { openDeck = nil } }
+                            .id(deck.id)
+                            .frame(width: max(380, geo.size.width / 2))
+                    }
+                }
+                .transition(.move(edge: .trailing))
+            }
+        }
     }
 
     // MARK: The ring
@@ -169,10 +184,15 @@ struct StatisticsView: View {
         let edge: HorizontalAlignment = onRight ? .leading : .trailing
         let share = total > 0 ? Int((Double(limit(deck)) / Double(total) * 100).rounded()) : 0
         return VStack(alignment: edge, spacing: 2) {
-            Text(deck.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(color(deck))
-                .lineLimit(1)
+            Button(action: { withAnimation(.easeOut(duration: 0.2)) { openDeck = deck } }) {
+                Text(deck.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(color(deck))
+                    .underline(openDeck?.id == deck.id)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help("Show this deck's cards")
             HStack(spacing: 4) {
                 stepButton("minus") { setLimit(deck, limit(deck) - 1) }
                 TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
