@@ -13,6 +13,8 @@ struct StatisticsView: View {
     @State private var drag: HandleDrag?
     @State private var hoveredHandle: Int?
     @State private var calibration: PluckkAPI.Calibration?
+    /// The split the total is being scaled from, kept while only the total changes.
+    @State private var totalBase: [String: Int]?
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
@@ -261,25 +263,37 @@ struct StatisticsView: View {
     // MARK: Changing limits
 
     private func setLimit(_ deck: DeckSummary, _ value: Int) {
+        totalBase = nil
+        store(deck, value)
+    }
+
+    private func store(_ deck: DeckSummary, _ value: Int) {
         limits[deck.id] = min(max(value, 0), 2000)
         dirty.insert(deck.id)
         scheduleSave()
     }
 
-    /// A new total keeps the decks' proportions; rounding is settled on the largest deck.
+    /// A new total keeps the decks' proportions. Typing it passes through each prefix (2, then 26,
+    /// then 260), so every step scales from the split as it was before typing began; scaling from
+    /// the last step would let a tiny total round the smaller decks away for good.
     private func setTotal(_ value: Int) {
-        let target = min(max(value, 0), 2000)
-        guard !active.isEmpty, target != total else { return }
-        let current = total
-        var scaled: [String: Int] = [:]
-        for deck in active {
-            let share = current > 0 ? Double(limit(deck)) / Double(current) : 1 / Double(active.count)
-            scaled[deck.id] = Int((share * Double(target)).rounded())
-        }
-        if let largest = active.max(by: { (scaled[$0.id] ?? 0) < (scaled[$1.id] ?? 0) }) {
-            scaled[largest.id] = max(0, (scaled[largest.id] ?? 0) + target - scaled.values.reduce(0, +))
-        }
-        for deck in active { setLimit(deck, scaled[deck.id] ?? 0) }
+        guard !active.isEmpty else { return }
+        let base = totalBase ?? Dictionary(uniqueKeysWithValues: active.map { ($0.id, limit($0)) })
+        totalBase = base
+        let shares = Self.scaled(active.map { base[$0.id] ?? 0 }, to: min(max(value, 0), 2000))
+        for (deck, share) in zip(active, shares) { store(deck, share) }
+    }
+
+    /// `base` scaled to add up to `target`, largest remainders taking the rounding. All zeros share equally.
+    static func scaled(_ base: [Int], to target: Int) -> [Int] {
+        let weights = base.reduce(0, +) > 0 ? base.map(Double.init) : base.map { _ in 1.0 }
+        let sum = weights.reduce(0, +)
+        guard sum > 0 else { return base }
+        let exact = weights.map { $0 / sum * Double(target) }
+        var out = exact.map { Int($0.rounded(.down)) }
+        let byRemainder = exact.indices.sorted { exact[$0] - Double(out[$0]) > exact[$1] - Double(out[$1]) }
+        for i in byRemainder.prefix(max(0, target - out.reduce(0, +))) { out[i] += 1 }
+        return out
     }
 
     /// After a short pause, so clicking through the arrows saves once.
