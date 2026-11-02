@@ -880,31 +880,56 @@ struct PracticeView: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 14) {
             CardTextField(label: "Question", text: $editQuestion, prominent: true, minLines: 3, autofocus: true)
-            CardTextField(label: "Answer", text: $editAnswer, minLines: 4)
-            numberEditor
+            if editIsNumber {
+                numberFields
+                CardTextField(label: "Explanation", text: $editAnswer, minLines: 3)
+            } else {
+                CardTextField(label: "Answer", text: $editAnswer, minLines: 4)
+            }
+            Toggle("The answer is a number (answered with a 95% range)", isOn: $editIsNumber)
+                .font(.system(size: 12))
             imageEditor
         }
     }
 
-    /// A number card's value and unit, which its 95% range is checked against.
-    private var numberEditor: some View {
+    /// A number card's answer: the value and unit its 95% range is checked against.
+    private var numberFields: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Toggle("The answer is a number (answered with a 95% range)", isOn: $editIsNumber)
-                .font(.system(size: 12))
-            if editIsNumber {
-                HStack(spacing: 8) {
-                    TextField("Value, e.g. 40 or 2.5 billion", text: $editNumber)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                    TextField("Unit, e.g. % or GJ", text: $editUnit)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 140)
-                    if !editNumber.isEmpty && NumberText.parse(editNumber) == nil {
-                        Text("Not a number").font(.system(size: 11)).foregroundColor(PluckkTheme.Dark.error)
-                    }
+            Text("ANSWER").font(.system(size: 10, weight: .semibold)).tracking(0.7).foregroundColor(.secondary)
+            HStack(spacing: 10) {
+                numberField("e.g. 46 or 2.5 billion", $editNumber, width: 220)
+                numberField("unit, e.g. MJ/kg or %", $editUnit, width: 180)
+                if !editNumber.isEmpty && NumberText.parse(editNumber) == nil {
+                    Text("Not a number").font(.system(size: 11)).foregroundColor(PluckkTheme.Dark.error)
                 }
             }
         }
+    }
+
+    private func numberField(_ prompt: String, _ text: Binding<String>, width: CGFloat) -> some View {
+        TextField(prompt, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 17, weight: .semibold).monospacedDigit())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(width: width)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(isDark ? 0.035 : 0.025)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(rule, lineWidth: 1))
+    }
+
+    /// The explanation usually states the number too ("About 12,000 Wh/kg."): when the number
+    /// changes, that figure follows, if it's there as it was.
+    private func explanationFollowing(_ change: CardNumberChange) -> String {
+        guard case let .set(value, unit) = change, let item = session.current, let old = item.numeric_answer else { return editAnswer }
+        let oldUnit = item.numeric_unit ?? ""
+        let newText = NumberText.withUnit(value, unit)
+        let plainOld = old.rounded() == old ? String(Int(old)) : String(old)
+        for figure in [NumberText.format(old), plainOld] {
+            for written in oldUnit.isEmpty ? [figure] : [figure + " " + oldUnit, figure + oldUnit] {
+                if editAnswer.contains(written) { return editAnswer.replacingOccurrences(of: written, with: newText) }
+            }
+        }
+        return editAnswer
     }
 
     /// nil while the number can't be read, so Save waits for it.
@@ -1003,7 +1028,7 @@ struct PracticeView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(action: {
                     guard let number = editNumberChange else { session.notice = "The number isn't readable."; return }
-                    session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange, number: number,
+                    session.saveEdit(question: editQuestion, answer: explanationFollowing(number), image: editImageChange, number: number,
                                      newCards: splitCards) { made in
                         splitCards.removeAll { $0.id == made.id }
                     }
