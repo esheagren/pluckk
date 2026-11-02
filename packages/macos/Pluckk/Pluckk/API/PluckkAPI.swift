@@ -521,6 +521,22 @@ struct ReviewItem: Decodable, Identifiable {
     var answer_type: String?
     var numeric_answer: Double?
     var numeric_unit: String?
+    let provenance: Provenance?
+    let source_selection: String?
+
+    struct Provenance: Decodable {
+        let identifier: String?
+        let title: String?
+        let container_title: String?
+        let selection: String?
+    }
+
+    /// A card made from a book: the book's title and the supporting passage, for the reader.
+    var bookSource: (book: String, chapter: String?, selection: String?)? {
+        guard let provenance, provenance.identifier?.hasPrefix("book:") == true,
+              let book = provenance.container_title, !book.isEmpty else { return nil }
+        return (book, provenance.title, provenance.selection ?? source_selection)
+    }
     var is_new: Bool
     var previews: IntervalPreviews
     let folder: Folder?

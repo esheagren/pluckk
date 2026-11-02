@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		031 /* BookReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133 /* BookReader.swift */; };
 		030 /* NumberCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132 /* NumberCardViews.swift */; };
 		029 /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131 /* StatisticsView.swift */; };
 		028 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* AssistantView.swift */; };
@@ -41,6 +42,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		133 /* BookReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookReader.swift; sourceTree = "<group>"; };
 		132 /* NumberCardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberCardViews.swift; sourceTree = "<group>"; };
 		131 /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		130 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
@@ -175,6 +177,7 @@
 				112 /* CardGenerationView.swift */,
 				115 /* SettingsView.swift */,
 				113 /* PracticeView.swift */,
+				133 /* BookReader.swift */,
 				132 /* NumberCardViews.swift */,
 				131 /* StatisticsView.swift */,
 				130 /* AssistantView.swift */,
@@ -288,6 +291,7 @@
 				012 /* CardGenerationView.swift in Sources */,
 				015 /* SettingsView.swift in Sources */,
 				013 /* PracticeView.swift in Sources */,
+				031 /* BookReader.swift in Sources */,
 				030 /* NumberCardViews.swift in Sources */,
 				029 /* StatisticsView.swift in Sources */,
 				028 /* AssistantView.swift in Sources */,

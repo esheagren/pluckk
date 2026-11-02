@@ -225,6 +225,11 @@ final class PracticeSession: ObservableObject {
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // The reader is open: Esc goes back to the card, everything else (scrolling, copying) is its own.
+            if let self, self.reading != nil {
+                if event.keyCode == 53 { self.closeReader(); return nil }
+                return event
+            }
             // ⌘+ / ⌘- / ⌘0: the size of the card's text.
             if let panel = PluckkPanel.shared, event.window === panel.hostWindow, AppState.shared.currentView == .practice {
                 let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
@@ -301,6 +306,27 @@ final class PracticeSession: ObservableObject {
             SessionTimer.shared.start()
         }
     }
+
+    // MARK: Reading in context
+
+    @Published private(set) var reading: ReaderPassage?
+
+    func openReader(_ item: ReviewItem) {
+        guard let source = item.bookSource else { return }
+        guard let book = BookLibrary.book(titled: source.book) else {
+            notice = "\(source.book) isn't in your bookshelf corpus."
+            return
+        }
+        let found = source.selection.flatMap { book.locate($0) }
+        // The passage's place decides the chapter; failing that, the chapter title the card names.
+        let chapter = found.flatMap { book.chapterIndex(at: $0.start) }
+            ?? source.chapter.flatMap { title in book.chapters.firstIndex { title.hasPrefix($0.title) || $0.title.hasPrefix(title) } }
+            ?? 0
+        reading = ReaderPassage(book: book, chapter: chapter, highlight: found)
+        if found == nil { notice = "Couldn't find this card's passage, so the chapter opens at the top." }
+    }
+
+    func closeReader() { reading = nil }
 
     // MARK: Number cards
 
@@ -599,6 +625,14 @@ struct PracticeView: View {
             }
         }
         .overlay { if let zoomed { lightbox(zoomed) } }
+        .overlay {
+            if let reading = session.reading {
+                ReaderView(passage: reading) { session.closeReader() }
+                    .id(reading.id)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: session.reading?.id)
         .onAppear {
             session.installKeyMonitor()
             session.startIfNeeded()
@@ -776,6 +810,18 @@ struct PracticeView: View {
                     .transition(.opacity)
                 if let url = item.image_url.flatMap(URL.init(string:)) {
                     cardImage(url)
+                }
+                if let book = item.bookSource {
+                    Button(action: { session.openReader(item) }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "book").font(.system(size: 10))
+                            Text("Read in context · \(book.book)")
+                        }
+                        .font(.system(size: 11))
+                        .foregroundColor(mutedText)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open the passage this card came from, in its chapter")
                 }
                 if let source = item.source_url, let url = URL(string: source), url.scheme?.hasPrefix("http") == true {
                     Button(action: { NSWorkspace.shared.open(url) }) {
