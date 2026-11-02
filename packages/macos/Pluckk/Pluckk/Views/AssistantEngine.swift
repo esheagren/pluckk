@@ -120,6 +120,8 @@ enum AssistantTools {
         ToolSpec(name: "list_decks", description: "List every deck with its id and total, due and new counts.", schema: object([:])),
         ToolSpec(name: "search_cards", description: "Find cards whose question or answer contains all the given words, or that carry a tag.",
                  schema: object(["query": string("Words to look for."), "tag": string("Only cards with this tag, e.g. rework."), "limit": integer])),
+        ToolSpec(name: "find_related_cards", description: "Find cards close in meaning (not just sharing words) to a text or to a card, using local embeddings of his cards. Give query (any text: a concept, a sentence, a draft card) or card_id. Use it to check for duplicates before making cards, to find related cards to link or compare, or to see what he already knows nearby. Spanish and Art cards aren't searched. Scores near 1 are near-duplicates; below about 0.6 is loosely related.",
+                 schema: object(["query": string, "card_id": string, "limit": integer])),
         ToolSpec(name: "get_card", description: "Read one card in full: question, answer, deck, tags, its source passage, and how many times it's been reviewed.",
                  schema: object(["id": string], required: ["id"])),
         ToolSpec(name: "list_deck_cards", description: "List a deck's cards, newest first, 50 at a time.",
@@ -167,6 +169,7 @@ enum AssistantTools {
         switch name {
         case "list_decks": return "Listing decks"
         case "search_cards": return "Searching cards: \(text("query").isEmpty ? text("tag") : text("query"))"
+        case "find_related_cards": return "Finding related cards" + (text("query").isEmpty ? "" : ": \(text("query"))")
         case "get_card": return "Reading a card"
         case "list_deck_cards": return "Listing a deck's cards"
         case "create_card": return "Creating a card: \(text("question"))"
@@ -241,6 +244,22 @@ enum AssistantTools {
                 return words.allSatisfy(haystack.contains)
             }
             return encode(["total_matches": hits.count, "cards": hits.prefix(limit).map(summary)] as [String: Any])
+
+        case "find_related_cards":
+            let query = text("query"), card = text("id") ?? text("card_id")
+            guard query != nil || card != nil else { throw Failure(message: "Give a query or a card_id.") }
+            let cards = try await allCards().filter {
+                !RelatedCards.pinnedDecks.contains(((($0["folder"] as? [String: Any])?["name"]) as? String) ?? "")
+            }
+            let matches = try await RelatedCards.search(query: query, cardId: card?.lowercased(), among: cards,
+                                                        limit: min(args["limit"] as? Int ?? 10, 30))
+            let byId = Dictionary(cards.map { (($0["id"] as? String) ?? "", $0) }, uniquingKeysWith: { a, _ in a })
+            return encode(matches.compactMap { match -> [String: Any]? in
+                guard let c = byId[match.id] else { return nil }
+                var row = summary(c)
+                row["similarity"] = match.score
+                return row
+            })
 
         case "get_card":
             let id = try cardId()
