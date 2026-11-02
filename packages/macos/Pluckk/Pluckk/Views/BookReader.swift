@@ -99,10 +99,23 @@ enum BookLibrary {
             return out
         }
 
-        // Exact title first, then a title that starts with it (subtitles vary between editions).
-        let found = rows("select id, title, text_path from books where lower(title) = ?", [key]).first
-            ?? rows("select id, title, text_path from books where lower(title) like ? order by length(title)", [key + "%"]).first
-        guard let found, found.count == 3 else { return nil }
+        // Titles are written differently on cards and in the corpus ("Children's Thinking: What
+        // Develops?" against "Children’s Thinking"), so compare them with quotes made plain, and
+        // fall back to the main title before any colon.
+        func plain(_ t: String) -> String {
+            String(String.UnicodeScalarView(t.lowercased().unicodeScalars.map(CorpusBook.plain)))
+                .trimmingCharacters(in: .whitespaces)
+        }
+        func main(_ t: String) -> String {
+            plain(t).components(separatedBy: ":").first!.trimmingCharacters(in: .whitespaces)
+        }
+        let all = rows("select id, title, text_path from books", []).filter { $0.count == 3 }
+        let wanted = plain(title)
+        let found = all.first { plain($0[1]) == wanted }
+            ?? all.first { main($0[1]) == main(title) }
+            ?? all.filter { plain($0[1]).hasPrefix(main(title)) || wanted.hasPrefix(main($0[1])) }
+                .min { $0[1].count < $1[1].count }
+        guard let found else { return nil }
         let chapters = rows("select title, start_char, end_char from chapters where book_id = ? order by ord", [found[0]])
             .map { BookChapter(title: $0[0], start: Int($0[1]) ?? 0, end: Int($0[2]) ?? 0) }
         var path = found[2]
