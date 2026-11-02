@@ -271,6 +271,7 @@ struct IntervalReveal: View {
         let range = "\(NumberText.format(outcome.lower))–\(NumberText.withUnit(outcome.upper, outcome.unit))"
         if outcome.contained { return "Caught it · your range \(range)" }
         let miss = outcome.answer < outcome.lower ? outcome.lower - outcome.answer : outcome.answer - outcome.upper
-        return "Missed by \(NumberText.withUnit(miss, outcome.unit)) · your range \(range)"
+        let by = NumberText.isPercent(outcome.unit) ? "\(NumberText.format(miss)) points" : NumberText.withUnit(miss, outcome.unit)
+        return "Missed by \(by) · your range \(range)"
     }
 }
