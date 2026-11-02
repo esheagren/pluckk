@@ -46,43 +46,66 @@ struct StatisticsView: View {
         return Color(hex: Self.palette[index % Self.palette.count])
     }
 
+    /// The deck shown on the right: the one picked, or the first on the ring.
+    private var shownDeck: DeckSummary? {
+        openDeck.flatMap { picked in decks.first { $0.id == picked.id } } ?? active.first ?? decks.first
+    }
+
+    /// Tall enough for the labels down the busier side, and no taller.
+    private var ringHeight: CGFloat {
+        let perSide = CGFloat((slices.count + 1) / 2)
+        return max(320, perSide * (Self.labelHeight + 4) + 24)
+    }
+
     var body: some View {
         GeometryReader { outer in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    GeometryReader { geo in ringWithDecks(in: geo.size) }
-                        .frame(height: max(440, outer.size.height - 70))
+            HStack(spacing: 0) {
+                // Left third: the new-card ring on top, the statistics under it.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        GeometryReader { geo in ringWithDecks(in: geo.size) }
+                            .frame(height: ringHeight)
 
-                    if let calibration, calibration.reviews > 0 {
-                        calibrationLine(calibration)
+                        Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly. Click a deck to see its cards." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
+                            .frame(maxWidth: .infinity)
+
+                        Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 8)
+
+                        if let calibration, calibration.reviews > 0 {
+                            calibrationLine(calibration)
+                        }
+
+                        WorkloadForecastView(revision: savedRevision)
+                            .padding(.top, 10)
                     }
-
-                    WorkloadForecastView(revision: savedRevision)
-                        .padding(.top, 18)
-
-                    Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
-                        .font(.system(size: 11))
-                        .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
-                        .frame(maxWidth: .infinity)
+                    .padding(16)
                 }
-                .padding(20)
+                .scrollIndicators(.hidden)
+                .frame(width: max(440, outer.size.width / 3))
+
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+
+                // Right two-thirds: one deck's cards.
+                if let deck = shownDeck {
+                    DeckBrowserPanel(deck: deck, allDecks: decks,
+                                     onSelect: { openDeck = $0 },
+                                     onChanged: { Task { await refreshDecks() } })
+                        .id(deck.id)
+                } else {
+                    Spacer()
+                }
             }
-            .scrollIndicators(.hidden)
         }
         .task { await load() }
-        .overlay(alignment: .trailing) {
-            if let deck = openDeck {
-                GeometryReader { geo in
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
-                        DeckBrowserPanel(deck: deck) { withAnimation(.easeOut(duration: 0.2)) { openDeck = nil } }
-                            .id(deck.id)
-                            .frame(width: max(380, geo.size.width / 2))
-                    }
-                }
-                .transition(.move(edge: .trailing))
-            }
-        }
+    }
+
+    /// Counts again after a card is moved, deleted or reviewed elsewhere; limits stay as they are.
+    private func refreshDecks() async {
+        guard let token = AuthManager.shared.accessToken,
+              let fresh = try? await PluckkAPI.shared.reviewDecks(token: token) else { return }
+        decks = fresh
     }
 
     // MARK: The ring
@@ -184,11 +207,11 @@ struct StatisticsView: View {
         let edge: HorizontalAlignment = onRight ? .leading : .trailing
         let share = total > 0 ? Int((Double(limit(deck)) / Double(total) * 100).rounded()) : 0
         return VStack(alignment: edge, spacing: 2) {
-            Button(action: { withAnimation(.easeOut(duration: 0.2)) { openDeck = deck } }) {
+            Button(action: { openDeck = deck }) {
                 Text(deck.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(color(deck))
-                    .underline(openDeck?.id == deck.id)
+                    .underline(shownDeck?.id == deck.id)
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
@@ -202,7 +225,7 @@ struct StatisticsView: View {
                     .frame(width: 34, height: 20)
                     .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
                 stepButton("plus") { setLimit(deck, limit(deck) + 1) }
-                Text(compact ? "\(share)%" : "a day · \(share)%").lineLimit(1)
+                if !compact { Text("a day · \(share)%").lineLimit(1) }
             }
             .font(.system(size: 12).monospacedDigit())
             Text("\(deck.new.formatted()) left · \(finishEstimate(deck))")
@@ -480,7 +503,8 @@ struct WorkloadForecastView: View {
         let peak = days.max { $0.total < $1.total }
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE d MMM"
-        return HStack(spacing: 18) {
+        return LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                         alignment: .leading, spacing: 10) {
             stat("\(days.first?.total ?? 0)", "today")
             stat("\(weekAverage)", "a day this week")
             if let peak { stat("\(peak.total)", "peak, \(formatter.string(from: peak.day))") }
