@@ -23,6 +23,12 @@ struct SplitCard: Identifiable {
     var answer = ""
 }
 
+/// What saving the card editor does to the card's number.
+enum CardNumberChange {
+    case keep, clear
+    case set(Double, String?)
+}
+
 /// What saving the card editor does to the card's image.
 enum CardImageChange {
     case keep, remove
@@ -411,8 +417,8 @@ final class PracticeSession: ObservableObject {
 
     func cancelEdit() { editing = false }
 
-    func saveEdit(question: String, answer: String, image: CardImageChange, newCards: [SplitCard] = [],
-                  onCreated: @escaping (SplitCard) -> Void = { _ in }) {
+    func saveEdit(question: String, answer: String, image: CardImageChange, number: CardNumberChange = .keep,
+                  newCards: [SplitCard] = [], onCreated: @escaping (SplitCard) -> Void = { _ in }) {
         guard let item = current, editing, !busy, let token = AuthManager.shared.accessToken else { return }
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -424,7 +430,9 @@ final class PracticeSession: ObservableObject {
             return
         }
         let textChanged = q != item.question || a != item.answer
-        if !textChanged, filled.isEmpty, case .keep = image { editing = false; return }
+        var numberChanged = true
+        if case .keep = number { numberChanged = false }
+        if !textChanged, !numberChanged, filled.isEmpty, case .keep = image { editing = false; return }
         busy = true
         notice = nil
         Task {
@@ -435,6 +443,16 @@ final class PracticeSession: ObservableObject {
                     for i in queue.indices where queue[i].card_id == item.card_id {
                         queue[i].question = q
                         queue[i].answer = a
+                    }
+                }
+                if numberChanged {
+                    var value: (value: Double, unit: String?)?
+                    if case let .set(v, unit) = number { value = (v, unit) }
+                    try await PluckkAPI.shared.setCardNumber(token: token, cardId: item.card_id, number: value)
+                    for i in queue.indices where queue[i].card_id == item.card_id {
+                        queue[i].answer_type = value == nil ? "text" : "numeric"
+                        queue[i].numeric_answer = value?.value
+                        queue[i].numeric_unit = value?.unit
                     }
                 }
                 try await saveImage(image, for: item, token: token)
@@ -542,6 +560,9 @@ struct PracticeView: View {
     @State private var editImage: NSImage?          // a new image, saved with the card
     @State private var editImageRemoved = false
     @State private var splitCards: [SplitCard] = []
+    @State private var editIsNumber = false
+    @State private var editNumber = ""
+    @State private var editUnit = ""
     @AppStorage("practiceAheadCount") private var aheadCount = 10
     @State private var confirmingDelete = false
 
@@ -815,6 +836,10 @@ struct PracticeView: View {
         editAnswer = session.current?.answer ?? ""
         editImage = nil
         editImageRemoved = false
+        let item = session.current
+        editIsNumber = item?.isNumeric == true
+        editNumber = item?.numeric_answer.map(NumberText.format) ?? ""
+        editUnit = item?.numeric_unit ?? ""
         session.beginEdit()
     }
 
@@ -856,8 +881,40 @@ struct PracticeView: View {
         VStack(alignment: .leading, spacing: 14) {
             CardTextField(label: "Question", text: $editQuestion, prominent: true, minLines: 3, autofocus: true)
             CardTextField(label: "Answer", text: $editAnswer, minLines: 4)
+            numberEditor
             imageEditor
         }
+    }
+
+    /// A number card's value and unit, which its 95% range is checked against.
+    private var numberEditor: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Toggle("The answer is a number (answered with a 95% range)", isOn: $editIsNumber)
+                .font(.system(size: 12))
+            if editIsNumber {
+                HStack(spacing: 8) {
+                    TextField("Value, e.g. 40 or 2.5 billion", text: $editNumber)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                    TextField("Unit, e.g. % or GJ", text: $editUnit)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    if !editNumber.isEmpty && NumberText.parse(editNumber) == nil {
+                        Text("Not a number").font(.system(size: 11)).foregroundColor(PluckkTheme.Dark.error)
+                    }
+                }
+            }
+        }
+    }
+
+    /// nil while the number can't be read, so Save waits for it.
+    private var editNumberChange: CardNumberChange? {
+        let item = session.current
+        let unit = editUnit.trimmingCharacters(in: .whitespaces)
+        guard editIsNumber else { return item?.isNumeric == true ? .clear : .keep }
+        guard let value = NumberText.parse(editNumber) else { return nil }
+        if item?.isNumeric == true, item?.numeric_answer == value, (item?.numeric_unit ?? "") == unit { return .keep }
+        return .set(value, unit.isEmpty ? nil : unit)
     }
 
     private var editImageURL: URL? {
@@ -945,7 +1002,9 @@ struct PracticeView: View {
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .keyboardShortcut(.cancelAction)
                 Button(action: {
-                    session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange, newCards: splitCards) { made in
+                    guard let number = editNumberChange else { session.notice = "The number isn't readable."; return }
+                    session.saveEdit(question: editQuestion, answer: editAnswer, image: editImageChange, number: number,
+                                     newCards: splitCards) { made in
                         splitCards.removeAll { $0.id == made.id }
                     }
                 }) {

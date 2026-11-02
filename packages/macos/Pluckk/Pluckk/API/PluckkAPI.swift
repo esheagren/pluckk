@@ -230,6 +230,14 @@ class PluckkAPI {
     }
 
     /// Attach an image to a card (stored in Vercel Blob; replaces any existing image).
+    /// Make a card a number card with this value and unit, or (nil) an ordinary one again.
+    func setCardNumber(token: String, cardId: String, number: (value: Double, unit: String?)?) async throws {
+        let body: [String: Any] = number.map {
+            ["answer_type": "numeric", "numeric_answer": $0.value, "numeric_unit": $0.unit.map { $0 as Any } ?? NSNull()]
+        } ?? ["answer_type": "text"]
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: body)
+    }
+
     @discardableResult
     func uploadCardImage(token: String, cardId: String, imageData: Data, mimeType: String) async throws -> String {
         let data = try await send(token: token, method: "POST", path: "/api/v1/images", json: [
@@ -510,9 +518,9 @@ struct ReviewItem: Decodable, Identifiable {
     let component_count: Int
     var image_url: String?
     let source_url: String?
-    let answer_type: String?
-    let numeric_answer: Double?
-    let numeric_unit: String?
+    var answer_type: String?
+    var numeric_answer: Double?
+    var numeric_unit: String?
     var is_new: Bool
     var previews: IntervalPreviews
     let folder: Folder?

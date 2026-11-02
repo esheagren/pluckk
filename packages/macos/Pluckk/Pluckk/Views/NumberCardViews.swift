@@ -138,19 +138,18 @@ struct IntervalRuler: View {
     }
 }
 
-/// Best guess, then low and high. Return in the guess offers a starting range; Return in high
-/// locks it in. Narrower and Wider work around the middle of the range.
+/// Low and high: Return in low moves to high, Return in high locks it in. Narrower and Wider
+/// work around the middle of the range.
 struct IntervalEntry: View {
     let unit: String?
     let busy: Bool
     let onLock: (Double, Double) -> Void
 
-    @State private var guess = ""
     @State private var low = ""
     @State private var high = ""
     @State private var problem: String?
     @FocusState private var focus: Field?
-    private enum Field { case guess, low, high }
+    private enum Field { case low, high }
 
     private var percent: Bool { NumberText.isPercent(unit) }
     private var range: (Double, Double)? {
@@ -162,14 +161,9 @@ struct IntervalEntry: View {
         VStack(spacing: 14) {
             Text("Your 95% range").font(.system(size: 10, weight: .semibold)).tracking(0.7).foregroundColor(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                field("Best guess", $guess, .guess, width: 110) {
-                    if let g = NumberText.parse(guess), low.isEmpty || high.isEmpty { suggest(around: g) }
-                    focus = .low
-                }
-                Text("·").foregroundColor(.secondary)
-                field("Low", $low, .low, width: 96) { focus = .high }
+                field("Low", $low, .low) { focus = .high }
                 Text("to").foregroundColor(.secondary)
-                field("High", $high, .high, width: 96) { lock() }
+                field("High", $high, .high) { lock() }
                 if let unit, !unit.isEmpty { Text(percent ? "%" : unit).foregroundColor(.secondary) }
             }
             .font(.system(size: 15))
@@ -195,34 +189,21 @@ struct IntervalEntry: View {
                 Text(problem).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
             }
         }
-        .onAppear { DispatchQueue.main.async { focus = .guess } }
+        .onAppear { DispatchQueue.main.async { focus = .low } }
     }
 
-    private func field(_ label: String, _ text: Binding<String>, _ which: Field, width: CGFloat,
-                       onSubmit: @escaping () -> Void) -> some View {
+    private func field(_ label: String, _ text: Binding<String>, _ which: Field, onSubmit: @escaping () -> Void) -> some View {
         TextField(label, text: text)
             .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
             .font(.system(size: 17, weight: .semibold).monospacedDigit())
-            .frame(width: width)
+            .frame(width: 110)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(focus == which ? PluckkTheme.accent.opacity(0.7) : .clear, lineWidth: 1.5))
             .focused($focus, equals: which)
             .onSubmit(onSubmit)
             .onChange(of: text.wrappedValue) { _ in problem = nil }
-    }
-
-    /// A first range around the guess: ±10 points for a percentage, otherwise 0.7× to 1.4×.
-    private func suggest(around g: Double) {
-        if percent {
-            set(max(0, g - 10), min(100, g + 10))
-        } else if g == 0 {
-            set(-1, 1)
-        } else {
-            let a = g * 0.7, b = g * 1.4
-            set(min(a, b), max(a, b))
-        }
     }
 
     private func resize(by factor: Double) {
@@ -244,9 +225,8 @@ struct IntervalEntry: View {
     }
 
     private func lock() {
-        if range == nil, let g = NumberText.parse(guess) { suggest(around: g) }
         guard let (lo, hi) = range else {
-            problem = "Enter a low and a high (or a best guess)."
+            problem = low.isEmpty || high.isEmpty ? "Enter a low and a high." : "That isn't a number."
             return
         }
         onLock(lo, hi)
