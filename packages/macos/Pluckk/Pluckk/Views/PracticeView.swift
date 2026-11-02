@@ -138,10 +138,11 @@ final class PracticeSession: ObservableObject {
 
     // MARK: Changes made elsewhere (the assistant), so the queue doesn't show stale cards
 
-    func applyExternalEdit(cardId: String, question: String?, answer: String?) {
+    func applyExternalEdit(cardId: String, question: String?, answer: String?, sourceURL: String? = nil) {
         for i in queue.indices where queue[i].card_id == cardId {
             if let question { queue[i].question = question }
             if let answer { queue[i].answer = answer }
+            if let sourceURL { queue[i].source_url = sourceURL }
         }
     }
 

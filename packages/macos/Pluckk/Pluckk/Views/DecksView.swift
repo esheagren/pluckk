@@ -451,7 +451,7 @@ private struct LibraryCardRow: View {
                             .font(.system(size: 13, weight: .semibold))
                             .textSelection(.enabled)
                             .lineLimit(3)
-                        Text(card.answer)
+                        Text(cardMarkdown(card.answer))
                             .font(.system(size: 12))
                             .textSelection(.enabled)
                             .foregroundColor(.secondary)

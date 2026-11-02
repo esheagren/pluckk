@@ -541,7 +541,7 @@ struct ReviewItem: Decodable, Identifiable {
     var tags: [String]?
     let component_count: Int
     var image_url: String?
-    let source_url: String?
+    var source_url: String?
     var answer_type: String?
     var numeric_answer: Double?
     var numeric_unit: String?
