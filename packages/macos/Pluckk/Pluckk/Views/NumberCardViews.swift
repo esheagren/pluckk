@@ -138,8 +138,7 @@ struct IntervalRuler: View {
     }
 }
 
-/// Low and high: Return in low moves to high, Return in high locks it in. Narrower and Wider
-/// work around the middle of the range.
+/// Low and high: Return in low moves to high, Return in high locks it in.
 struct IntervalEntry: View {
     let unit: String?
     let busy: Bool
@@ -172,19 +171,15 @@ struct IntervalEntry: View {
                 IntervalRuler(lower: lo, upper: hi, unit: unit).padding(.horizontal, 30)
             }
 
-            HStack(spacing: 8) {
-                Button("Narrower") { resize(by: 0.75) }.buttonStyle(QuietButtonStyle()).disabled(range == nil)
-                Button("Wider") { resize(by: 1.33) }.buttonStyle(QuietButtonStyle()).disabled(range == nil)
-                Button(action: lock) {
-                    HStack(spacing: 6) {
-                        if busy { ProgressView().controlSize(.small) }
-                        Text("Lock in")
-                        Text("↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
-                    }
+            Button(action: lock) {
+                HStack(spacing: 6) {
+                    if busy { ProgressView().controlSize(.small) }
+                    Text("Lock in")
+                    Text("↩").font(.system(size: 11, weight: .medium)).opacity(0.6)
                 }
-                .buttonStyle(PillButtonStyle(prominent: true))
-                .disabled(busy)
             }
+            .buttonStyle(PillButtonStyle(prominent: true))
+            .disabled(busy)
             if let problem {
                 Text(problem).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
             }
@@ -204,24 +199,6 @@ struct IntervalEntry: View {
             .focused($focus, equals: which)
             .onSubmit(onSubmit)
             .onChange(of: text.wrappedValue) { _ in problem = nil }
-    }
-
-    private func resize(by factor: Double) {
-        guard let (lo, hi) = range else { return }
-        if !percent, lo > 0 {
-            let middle = (lo * hi).squareRoot()
-            let spread = pow(max(hi / lo, 1.02), factor)
-            set(middle / spread.squareRoot(), middle * spread.squareRoot())
-        } else {
-            let middle = (lo + hi) / 2
-            let half = max((hi - lo) / 2, max(abs(middle) * 0.02, 0.5)) * factor
-            set(percent ? max(0, middle - half) : middle - half, percent ? min(100, middle + half) : middle + half)
-        }
-    }
-
-    private func set(_ lo: Double, _ hi: Double) {
-        low = NumberText.format(lo)
-        high = NumberText.format(hi)
     }
 
     private func lock() {
