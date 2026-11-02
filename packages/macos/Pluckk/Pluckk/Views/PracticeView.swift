@@ -563,7 +563,7 @@ struct PracticeView: View {
     @State private var editIsNumber = false
     @State private var editNumber = ""
     @State private var editUnit = ""
-    @AppStorage("practiceAheadCount") private var aheadCount = 10
+    @AppStorage("extraNewCount") private var aheadCount = 5
     @State private var confirmingDelete = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -1094,16 +1094,16 @@ struct PracticeView: View {
                         .font(.system(size: 13))
                         .foregroundColor(mutedText)
                 }
-                if session.aheadState == .offer {
+                if offerExtra {
                     HStack(spacing: 8) {
-                        Text("Practice ahead with")
+                        Text("Add")
                         TextField("", value: $aheadCount, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.center)
                             .frame(width: 46)
                             .onSubmit(practiceAhead)
-                        Stepper("", value: $aheadCount, in: 1...100, step: 5).labelsHidden()
-                        Text("new cards?")
+                        Stepper("", value: $aheadCount, in: 1...100).labelsHidden()
+                        Text(aheadCount == 1 ? "new card for today?" : "new cards for today?")
                     }
                     .font(.system(size: 13))
                     .foregroundColor(mutedText)
@@ -1112,8 +1112,8 @@ struct PracticeView: View {
                     if session.canUndo {
                         Button("Undo last") { session.undo() }.buttonStyle(PillButtonStyle(prominent: false))
                     }
-                    if session.aheadState == .offer {
-                        Button("Continue", action: practiceAhead).buttonStyle(PillButtonStyle(prominent: true))
+                    if offerExtra {
+                        Button("Add them", action: practiceAhead).buttonStyle(PillButtonStyle(prominent: true))
                     } else {
                         Button("Start another") { session.start() }.buttonStyle(PillButtonStyle(prominent: true))
                     }
@@ -1128,6 +1128,15 @@ struct PracticeView: View {
             }
             .padding(24)
         }
+    }
+
+    /// Done for the day: nothing due and no new cards left under today's limits (or, for a single
+    /// deck, nothing more it could deal). Extra new cards then come from the decks in the shares
+    /// set in Statistics.
+    private var offerExtra: Bool {
+        if session.aheadState == .offer { return true }
+        guard session.aheadState == .none, session.focusDeck == nil, let counts = session.todayCounts else { return false }
+        return counts.review == 0 && counts.learn == 0
     }
 
     private func practiceAhead() {

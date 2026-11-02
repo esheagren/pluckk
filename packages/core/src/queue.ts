@@ -10,7 +10,8 @@
 //               fill due → new (per-folder new/day cap), deficits redistributed
 //   focus     — one folder, quota = size, same fill order
 //   backlog   — one folder, every due card oldest-first, batched; no new cards
-//   ahead     — new cards only, past the daily limits, because you asked; one folder or all
+//   ahead     — new cards only, past the daily limits, because you asked; one folder, or all of
+//               them shared out in proportion to their daily limits
 
 import { MAIN_COMPONENT, type ComponentId } from './entities.js';
 import { DEFAULT_MECHANICS, MINUTE_MS } from './scheduler/constants.js';
@@ -66,6 +67,38 @@ function shuffle<T>(arr: T[]): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/**
+ * Extra new cards shared out like the daily limits: each deck gets its limit's share of `size`
+ * (largest remainders settle the rounding), and what a deck can't supply goes to the others.
+ * Decks with a limit of 0 are left out, unless every deck is at 0, when they share equally.
+ */
+export function aheadQuotas(folders: (string | null)[], size: number, supply: (f: string | null) => number,
+                            limit: (f: string | null) => number): Map<string | null, number> {
+  const quotas = new Map(folders.map((f) => [f, 0] as [string | null, number]));
+  const weighted = folders.filter((f) => limit(f) > 0 && supply(f) > 0);
+  const weight = (f: string | null) => (weighted.length > 0 ? limit(f) : 1);
+  let open = weighted.length > 0 ? weighted : folders.filter((f) => supply(f) > 0);
+  let left = size;
+  while (left > 0 && open.length > 0) {
+    const total = open.reduce((s, f) => s + weight(f), 0);
+    const shares = open.map((f) => {
+      const exact = (left * weight(f)) / total;
+      const room = supply(f) - quotas.get(f)!;
+      return { f, whole: Math.min(Math.floor(exact), room), fraction: exact - Math.floor(exact), room };
+    });
+    let given = 0;
+    for (const s of shares) { quotas.set(s.f, quotas.get(s.f)! + s.whole); given += s.whole; }
+    for (const s of [...shares].sort((a, b) => b.fraction - a.fraction || weight(b.f) - weight(a.f))) {
+      if (given >= left) break;
+      if (quotas.get(s.f)! < supply(s.f)) { quotas.set(s.f, quotas.get(s.f)! + 1); given++; }
+    }
+    if (given === 0) break;
+    left -= given;
+    open = open.filter((f) => quotas.get(f)! < supply(f));
+  }
+  return quotas;
 }
 
 /** Never reviewed, so new to the person, whether or not it has a schedule row yet. */
@@ -187,15 +220,13 @@ export function selectSession(input: MixerInput): MixerResult {
   }
 
   if (input.mode === 'ahead') {
-    // Turn by turn across folders, so one deck's oldest cards don't crowd out the rest.
     const folders = input.folderId !== undefined ? [input.folderId] : [...byFolder.keys()];
-    const dealt: CandidateRow[] = [];
-    for (let i = 0; dealt.length < input.size; i++) {
-      const round = folders.flatMap((f) => byFolder.get(f)?.fresh[i] ?? []);
-      if (round.length === 0) break;
-      dealt.push(...round.slice(0, input.size - dealt.length));
-    }
-    for (const f of folders) noteMeta(f, dealt.filter((c) => c.folderId === f).length);
+    const quotas = aheadQuotas(folders, input.size, (f) => byFolder.get(f)?.fresh.length ?? 0, (f) => {
+      const info = f ? input.folders.find((x) => x.id === f) : null;
+      return info?.newPerDay ?? input.defaultNewPerDay;
+    });
+    const dealt = folders.flatMap((f) => (byFolder.get(f)?.fresh ?? []).slice(0, quotas.get(f) ?? 0));
+    for (const f of folders) noteMeta(f, quotas.get(f) ?? 0);
     return finish('ahead', order(dealt));
   }
 

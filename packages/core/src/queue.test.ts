@@ -1,7 +1,7 @@
 // The mixer rules, as pure tests. Scenario set ported from the old smoke-mixer.ts
 // (which needed a live database).
 import { describe, expect, it } from 'vitest';
-import { onePerCard, selectSession, todayCounts, type CandidateRow, type FolderInfo, type MixerInput } from './queue.js';
+import { aheadQuotas, onePerCard, selectSession, todayCounts, type CandidateRow, type FolderInfo, type MixerInput } from './queue.js';
 
 const NOW = new Date('2026-09-02T12:00:00.000Z');
 const PAST = new Date(NOW.getTime() - 3 * 864e5).toISOString();
@@ -51,10 +51,18 @@ describe('practising ahead', () => {
     expect(r.dealt).toHaveLength(7);
     expect(r.dealtIds.every((id) => id.startsWith('an'))).toBe(true);
   });
-  it('shares across folders, skipping paused ones, when none is named', () => {
-    const r = selectSession(input({ mode: 'ahead', size: 4 }));
-    expect(r.dealtIds.filter((id) => id.startsWith('an'))).toHaveLength(2);
-    expect(r.dealtIds.filter((id) => id.startsWith('bn'))).toHaveLength(2);
+  it('shares across folders by their daily limits, skipping paused ones, when none is named', () => {
+    const r = selectSession(input({ mode: 'ahead', size: 8 }));       // A allows 3 a day, B 5
+    expect(r.dealtIds.filter((id) => id.startsWith('an'))).toHaveLength(3);
+    expect(r.dealtIds.filter((id) => id.startsWith('bn'))).toHaveLength(5);
+  });
+  it('gives what one deck lacks to the others', () => {
+    const q = aheadQuotas(['a', 'b'], 10, (f) => (f === 'a' ? 2 : 50), () => 10);
+    expect([q.get('a'), q.get('b')]).toEqual([2, 8]);
+  });
+  it('leaves out decks at 0 a day, unless all are', () => {
+    expect(aheadQuotas(['a', 'b'], 5, () => 50, (f) => (f === 'a' ? 0 : 5)).get('a')).toBe(0);
+    expect(aheadQuotas(['a', 'b'], 4, () => 50, () => 0).get('a')).toBe(2);
   });
   it('stops when the new cards run out', () => {
     expect(selectSession(input({ mode: 'ahead', folderId: A, size: 50 })).dealt).toHaveLength(10);
