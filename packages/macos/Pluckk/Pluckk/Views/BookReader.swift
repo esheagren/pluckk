@@ -79,12 +79,28 @@ enum BookLibrary {
             .first { FileManager.default.fileExists(atPath: ($0 as NSString).appendingPathComponent("db/bookshelf.sqlite")) }
     }
 
+    /// The corpus is in WAL mode, and a read-only connection can't read it while its -shm file is
+    /// missing (nothing else has it open, or iCloud has swept the sidecar files away). Then read
+    /// the main file as it stands, which holds everything once the log has been checkpointed.
+    private static func openCorpus(_ path: String) -> OpaquePointer? {
+        func attempt(_ name: String, _ flags: Int32) -> OpaquePointer? {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(name, &db, flags, nil) == SQLITE_OK,
+                  sqlite3_exec(db, "SELECT 1 FROM books LIMIT 1", nil, nil, nil) == SQLITE_OK else {
+                sqlite3_close(db)
+                return nil
+            }
+            return db
+        }
+        let uri = URL(fileURLWithPath: path).absoluteString + "?immutable=1"
+        return attempt(path, SQLITE_OPEN_READONLY) ?? attempt(uri, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI)
+    }
+
     static func book(titled title: String) -> CorpusBook? {
         let key = title.lowercased()
         if let book = cache[key] { return book }
         guard let root = root else { return nil }
-        var db: OpaquePointer?
-        guard sqlite3_open_v2((root as NSString).appendingPathComponent("db/bookshelf.sqlite"), &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return nil }
+        guard let db = openCorpus((root as NSString).appendingPathComponent("db/bookshelf.sqlite")) else { return nil }
         defer { sqlite3_close(db) }
 
         func rows(_ sql: String, _ bind: [String]) -> [[String]] {
