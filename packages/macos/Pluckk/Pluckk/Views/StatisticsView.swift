@@ -13,7 +13,6 @@ struct StatisticsView: View {
     @State private var notice: String?
     @State private var drag: HandleDrag?
     @State private var hoveredHandle: Int?
-    @State private var calibration: PluckkAPI.Calibration?
     /// The split the total is being scaled from, kept while only the total changes.
     @State private var totalBase: [String: Int]?
     /// Bumped after each saved change to the limits, so the forecast below redoes itself.
@@ -23,7 +22,7 @@ struct StatisticsView: View {
 
     private static let palette = ["c8a96e", "5b9bd5", "3fb950", "a371f7", "e5534b", "39c5cf", "e5a14b", "db61a2"]
     private static let ringWidth: CGFloat = 22
-    private static let labelHeight: CGFloat = 58
+    private static let labelHeight: CGFloat = 22
     /// The least of the ring a deck is drawn with, so one at 0 keeps a sliver and its own handle.
     private static let minimumShare = 0.02
 
@@ -54,7 +53,7 @@ struct StatisticsView: View {
     /// Tall enough for the labels down the busier side, and no taller.
     private var ringHeight: CGFloat {
         let perSide = CGFloat((slices.count + 1) / 2)
-        return max(320, perSide * (Self.labelHeight + 4) + 24)
+        return max(230, perSide * (Self.labelHeight + 4) + 24)
     }
 
     var body: some View {
@@ -66,19 +65,18 @@ struct StatisticsView: View {
                         GeometryReader { geo in ringWithDecks(in: geo.size) }
                             .frame(height: ringHeight)
 
-                        Text(notice ?? "Drag a handle round the ring to share cards out, or set a deck's number directly. Click a deck to see its cards." + (decks.contains(where: \.is_paused) ? " Paused decks aren't shown." : ""))
-                            .font(.system(size: 11))
-                            .foregroundColor(notice == nil ? .secondary : PluckkTheme.Dark.error)
-                            .frame(maxWidth: .infinity)
+                        deckRows
+
+                        if let notice {
+                            Text(notice)
+                                .font(.system(size: 11))
+                                .foregroundColor(PluckkTheme.Dark.error)
+                                .frame(maxWidth: .infinity)
+                        }
 
                         Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 8)
 
-                        if let calibration, calibration.reviews > 0 {
-                            calibrationLine(calibration)
-                        }
-
                         WorkloadForecastView(revision: savedRevision)
-                            .padding(.top, 10)
                     }
                     .padding(16)
                 }
@@ -135,9 +133,10 @@ struct StatisticsView: View {
     }
 
     private func ringWithDecks(in size: CGSize) -> some View {
-        let labelWidth = max(96, min(200, size.width * 0.24))
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let radius = max(70, min((size.width - 2 * (labelWidth + 44)) / 2, (size.height - 40) / 2, 170))
+        let radius = max(60, min(size.width * 0.18, (size.height - 40) / 2, 150))
+        // Names fill what's left on each side of the ring, and stop at the edge.
+        let labelWidth = max(60, min(170, size.width / 2 - radius - 38))
         let current = slices
         let placed = placeLabels(current, center: center, radius: radius, height: size.height)
 
@@ -163,7 +162,7 @@ struct StatisticsView: View {
             .foregroundColor(.secondary)
             .position(center)
             ForEach(placed, id: \.slice.deck.id) { label in
-                deckLabel(label.slice, onRight: label.onRight, compact: labelWidth < 150)
+                deckName(label.slice.deck)
                     .frame(width: labelWidth, height: Self.labelHeight, alignment: label.onRight ? .leading : .trailing)
                     .position(x: center.x + (label.onRight ? 1 : -1) * (radius + 34 + labelWidth / 2), y: label.y)
                     .animation(.easeOut(duration: 0.15), value: label.y)
@@ -202,36 +201,51 @@ struct StatisticsView: View {
         return placed
     }
 
-    private func deckLabel(_ slice: Slice, onRight: Bool, compact: Bool) -> some View {
-        let deck = slice.deck
-        let edge: HorizontalAlignment = onRight ? .leading : .trailing
-        let share = total > 0 ? Int((Double(limit(deck)) / Double(total) * 100).rounded()) : 0
-        return VStack(alignment: edge, spacing: 2) {
-            Button(action: { openDeck = deck }) {
-                Text(deck.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(color(deck))
-                    .underline(shownDeck?.id == deck.id)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .help("Show this deck's cards")
-            HStack(spacing: 4) {
-                stepButton("minus") { setLimit(deck, limit(deck) - 1) }
-                TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .multilineTextAlignment(.center)
-                    .frame(width: 34, height: 20)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
-                stepButton("plus") { setLimit(deck, limit(deck) + 1) }
-                if !compact { Text("a day · \(share)%").lineLimit(1) }
-            }
-            .font(.system(size: 12).monospacedDigit())
-            Text("\(deck.new.formatted()) left · \(finishEstimate(deck))")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundColor(.secondary)
+    /// A deck's name beside its slice; click to show its cards.
+    private func deckName(_ deck: DeckSummary) -> some View {
+        Button(action: { openDeck = deck }) {
+            Text(deck.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color(deck))
+                .underline(shownDeck?.id == deck.id)
                 .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .help(deck.title)
+    }
+
+    /// Every deck on the ring in one list: its cards a day, and how long its new cards last at that.
+    private var deckRows: some View {
+        VStack(spacing: 6) {
+            ForEach(active) { deck in
+                HStack(spacing: 8) {
+                    Circle().fill(color(deck)).frame(width: 8, height: 8)
+                    Button(action: { openDeck = deck }) {
+                        Text(deck.title)
+                            .font(.system(size: 13, weight: shownDeck?.id == deck.id ? .semibold : .regular))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show this deck's cards")
+                    HStack(spacing: 4) {
+                        stepButton("minus") { setLimit(deck, limit(deck) - 1) }
+                        TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13, weight: .medium).monospacedDigit())
+                            .multilineTextAlignment(.center)
+                            .frame(width: 34, height: 20)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
+                        stepButton("plus") { setLimit(deck, limit(deck) + 1) }
+                    }
+                    Text(finishEstimate(deck))
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .frame(width: 92, alignment: .trailing)
+                }
+            }
         }
     }
 
@@ -381,24 +395,8 @@ struct StatisticsView: View {
         }
     }
 
-    /// How often 95% ranges on number cards caught the answer.
-    private func calibrationLine(_ c: PluckkAPI.Calibration) -> some View {
-        let rate = Int((Double(c.caught) / Double(c.reviews) * 100).rounded())
-        let advice = c.reviews < 10 ? "Too few yet to judge."
-            : rate < 88 ? "Below 95%: your ranges are too narrow."
-            : rate > 98 ? "Nearly always: your ranges could be tighter."
-            : "About right for 95%."
-        return VStack(spacing: 4) {
-            Text("Number cards").font(.system(size: 10, weight: .semibold)).tracking(0.7).foregroundColor(.secondary)
-            Text("Your 95% ranges caught \(c.caught) of \(c.reviews) answers (\(rate)%). \(advice)")
-                .font(.system(size: 13))
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private func load() async {
         guard let token = AuthManager.shared.accessToken else { return }
-        calibration = try? await PluckkAPI.shared.calibration(token: token)
         do {
             async let summaries = PluckkAPI.shared.reviewDecks(token: token)
             async let fallback = PluckkAPI.shared.defaultNewPerDay(token: token)
