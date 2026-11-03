@@ -214,21 +214,16 @@ struct StatisticsView: View {
         .help(deck.title)
     }
 
-    /// Every deck on the ring in one list: its cards a day, and how long its new cards last at that.
-    private var deckRows: some View {
-        VStack(spacing: 6) {
-            ForEach(active) { deck in
-                HStack(spacing: 8) {
-                    Circle().fill(color(deck)).frame(width: 8, height: 8)
-                    Button(action: { openDeck = deck }) {
-                        Text(deck.title)
-                            .font(.system(size: 13, weight: shownDeck?.id == deck.id ? .semibold : .regular))
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Show this deck's cards")
+    /// The selected deck alone: its cards a day, and how long its new cards last at that rate.
+    @ViewBuilder private var deckRows: some View {
+        if let deck = shownDeck {
+            HStack(spacing: 10) {
+                Circle().fill(active.contains(deck) ? color(deck) : Color.secondary).frame(width: 9, height: 9)
+                Text(deck.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if active.contains(deck) {
                     HStack(spacing: 4) {
                         stepButton("minus") { setLimit(deck, limit(deck) - 1) }
                         TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
@@ -243,9 +238,17 @@ struct StatisticsView: View {
                         .font(.system(size: 12).monospacedDigit())
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                        .frame(width: 92, alignment: .trailing)
+                        .frame(minWidth: 70, alignment: .trailing)
+                } else {
+                    Text(deck.is_paused ? "paused" : "no new cards")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                 }
             }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
+            .id(deck.id)
+            .transition(.opacity)
         }
     }
 
