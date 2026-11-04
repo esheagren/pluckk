@@ -1227,8 +1227,11 @@ struct PracticeView: View {
 
     /// Type that fits its content: short prompts large, long ones step down (as in the web app).
     private func fittedSize(_ text: String) -> CGFloat {
-        let n = text.trimmingCharacters(in: .whitespacesAndNewlines).count
-        let base: CGFloat = n <= 60 ? 22 : n <= 140 ? 19 : n <= 320 ? 16 : 14
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let n = t.count
+        // A character or two of Chinese or Japanese, shown on its own: big enough to read its strokes.
+        let glyphs = n > 0 && n <= 3 && t.unicodeScalars.allSatisfy { (0x3400...0x9FFF).contains($0.value) || (0xF900...0xFAFF).contains($0.value) }
+        let base: CGFloat = glyphs ? 72 : n <= 60 ? 22 : n <= 140 ? 19 : n <= 320 ? 16 : 14
         return base * CGFloat(textScale > 0 ? textScale : 1)
     }
 }
