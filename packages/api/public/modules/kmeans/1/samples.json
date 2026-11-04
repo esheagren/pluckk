@@ -1,0 +1,1 @@
+[ { "slot": "reveal", "props": { "k": 3, "points": 60, "seed": 4 } }, { "slot": "reveal", "props": { "k": 4, "points": 90, "seed": 3, "init": "kmeans++" } } ]
