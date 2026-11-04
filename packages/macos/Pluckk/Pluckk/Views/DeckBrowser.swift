@@ -21,6 +21,8 @@ struct DeckBrowserPanel: View {
     @State private var reachedEnd = false
     @State private var search = ""
     @State private var notice: String?
+    /// Cards picked with ⌘- or ⇧-click, to practise together.
+    @State private var selected: [String] = []
     @Environment(\.colorScheme) private var colorScheme
 
     private static let pageSize = 200
@@ -72,7 +74,39 @@ struct DeckBrowserPanel: View {
                     }
                 }
                 .buttonStyle(PillButtonStyle(prominent: true))
-                .help("Practise just this deck")
+                .help("Practise this deck's due and new cards")
+                Menu {
+                    Button("All \(deck.total) cards") { practiseRun(.init(title: deck.title, folderId: .some(deck.folder_id))) }
+                    Button("Learned cards only (\(count(.seen)))") {
+                        practiseRun(.init(title: "\(deck.title) · learned", folderId: .some(deck.folder_id), filter: .learned))
+                    }
+                    .disabled(count(.seen) == 0)
+                    Button("Cards I missed in the last 30 days") {
+                        practiseRun(.init(title: "\(deck.title) · missed", folderId: .some(deck.folder_id), filter: .missed))
+                    }
+                    Divider()
+                    Text("Practice ignores due dates and leaves them as they are. Again brings a card back tomorrow.")
+                } label: {
+                    Text("Practise anyway").font(.system(size: 12, weight: .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Practise cards now, whatever their schedule; due dates stay as they are")
+            }
+            if !selected.isEmpty {
+                HStack(spacing: 10) {
+                    Text("\(selected.count) selected").font(.system(size: 12)).foregroundColor(.secondary)
+                    Button(action: practiseSelected) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill").font(.system(size: 9))
+                            Text("Practise \(selected.count)")
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    Button("Clear") { selected = [] }
+                        .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
+                    Spacer()
+                }
             }
             if let notice {
                 Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
@@ -93,6 +127,9 @@ struct DeckBrowserPanel: View {
                           spacing: 10) {
                     ForEach(shown) { card in
                         CardTile(card: card, moveTargets: allDecks.filter { $0.id != deck.id },
+                                 isSelected: selected.contains(card.id),
+                                 onPick: { pick(card, extend: $0) },
+                                 onPractise: { practiseRun(.init(title: Self.short(card.question), cardIds: [card.id])) },
                                  onSave: { q, a in save(card, q, a) },
                                  onToggleRework: { toggleRework(card) },
                                  onMove: { move(card, to: $0) },
@@ -110,6 +147,32 @@ struct DeckBrowserPanel: View {
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: filter) { await reload() }
+        .onChange(of: deck.id) { _ in selected = [] }
+    }
+
+    // MARK: Practising picked cards
+
+    /// ⌘-click toggles a card; ⇧-click takes in everything from the last pick to this one.
+    private func pick(_ card: LibraryCard, extend: Bool) {
+        if extend, let anchor = selected.last, let a = shown.firstIndex(where: { $0.id == anchor }),
+           let b = shown.firstIndex(where: { $0.id == card.id }) {
+            for c in shown[min(a, b)...max(a, b)] where !selected.contains(c.id) { selected.append(c.id) }
+        } else if let i = selected.firstIndex(of: card.id) {
+            selected.remove(at: i)
+        } else {
+            selected.append(card.id)
+        }
+    }
+
+    private func practiseSelected() {
+        let order = shown.map(\.id).filter(selected.contains)
+        practiseRun(.init(title: "\(order.count) card\(order.count == 1 ? "" : "s") from \(deck.title)", cardIds: order))
+        selected = []
+    }
+
+    static func short(_ text: String) -> String {
+        let line = text.components(separatedBy: .newlines).first ?? text
+        return line.count > 40 ? String(line.prefix(38)) + "…" : line
     }
 
     // MARK: Changing cards
@@ -180,6 +243,10 @@ struct DeckBrowserPanel: View {
 private struct CardTile: View {
     let card: LibraryCard
     let moveTargets: [DeckSummary]
+    var isSelected = false
+    /// A ⌘- or ⇧-click: pick the card (true when ⇧ extends the pick).
+    var onPick: (Bool) -> Void = { _ in }
+    var onPractise: () -> Void = {}
     let onSave: (String, String) -> Void
     let onToggleRework: () -> Void
     let onMove: (String?) -> Void
@@ -201,8 +268,14 @@ private struct CardTile: View {
         .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke((isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder).opacity(hovering ? 1 : 0.6), lineWidth: 1))
+            .stroke(isSelected ? PluckkTheme.accent : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder).opacity(hovering ? 1 : 0.6),
+                    lineWidth: isSelected ? 2 : 1))
         .onHover { hovering = $0 }
+        .simultaneousGesture(TapGesture().onEnded {
+            guard !editing else { return }
+            let mods = NSEvent.modifierFlags
+            if mods.contains(.command) || mods.contains(.shift) { onPick(mods.contains(.shift)) }
+        })
     }
 
     private var face: some View {
@@ -241,6 +314,7 @@ private struct CardTile: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
+            CardIconButton(systemName: "play.fill", help: "Practise this card now (schedule unchanged)", action: onPractise)
             CardIconButton(systemName: "pencil",
                            help: card.isSimple ? "Edit" : "Two-way and list cards are edited in the web app") {
                 q = card.question

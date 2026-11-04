@@ -58,7 +58,7 @@ final class PracticeSession: ObservableObject {
 
     /// The latest undoable action: a rating, or a delete (with the queue entries it removed).
     private enum LastAction {
-        case rating(eventId: String, item: ReviewItem, index: Int, wasAgain: Bool)
+        case rating(eventId: String?, item: ReviewItem, index: Int, wasAgain: Bool)   // nil: a practice rating, nothing to undo on the server
         case deletion(eventId: String, index: Int, removed: [ReviewItem])
     }
 
@@ -168,12 +168,32 @@ final class PracticeSession: ObservableObject {
     /// Practise one deck: a fresh session from just that deck, until you leave it.
     func practice(deck: DeckSummary) {
         focusDeck = deck
+        practiceRun = nil
         timesUp = false
         start()
     }
 
     /// Back to the normal mix of every deck.
     func leaveDeck() {
+        focusDeck = nil
+        practiceRun = nil
+        timesUp = false
+        start()
+    }
+
+    /// Cards practised outside the schedule: a whole deck, its learned or missed cards, or cards
+    /// picked by hand. Ratings are logged but leave due dates alone (see the API's review/practice).
+    struct PracticeRun: Equatable {
+        enum Filter: String { case all, learned, missed }
+        let title: String
+        var folderId: String?? = nil     // a deck (nil inside: unfiled), or nil with cardIds
+        var cardIds: [String]? = nil
+        var filter: Filter = .all
+    }
+    @Published private(set) var practiceRun: PracticeRun?
+
+    func practise(_ run: PracticeRun) {
+        practiceRun = run
         focusDeck = nil
         timesUp = false
         start()
@@ -193,9 +213,15 @@ final class PracticeSession: ObservableObject {
         notice = nil
         aheadState = .none
         let focus: String?? = focusDeck.map { $0.folder_id }
+        let run = practiceRun
         Task {
             do {
-                let items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus, ahead: ahead)
+                let items: [ReviewItem]
+                if let run {
+                    items = try await PluckkAPI.shared.practiceSession(token: token, folderId: run.folderId, cardIds: run.cardIds, filter: run.filter.rawValue)
+                } else {
+                    items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus, ahead: ahead)
+                }
                 queue = items
                 index = 0
                 reviewedCount = 0
@@ -204,7 +230,7 @@ final class PracticeSession: ObservableObject {
                 history = []
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
-                if items.isEmpty { aheadState = ahead == nil ? .offer : .noneLeft }
+                if items.isEmpty && run == nil { aheadState = ahead == nil ? .offer : .noneLeft }
                 refreshTodayCounts()
             } catch {
                 phase = .failed(error.localizedDescription)
@@ -385,7 +411,8 @@ final class PracticeSession: ObservableObject {
             defer { busy = false }
             do {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed,
-                                                                     interval: outcome.map { ($0.lower, $0.upper) })
+                                                                     interval: outcome.map { ($0.lower, $0.upper) },
+                                                                     practice: practiceRun != nil)
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
                 reviewedCount += 1
                 if rating == .again {
@@ -416,7 +443,8 @@ final class PracticeSession: ObservableObject {
             do {
                 switch last {
                 case let .rating(eventId, item, at, wasAgain):
-                    let restored = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) ?? item
+                    var restored = item
+                    if let eventId, let fresh = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) { restored = fresh }
                     // An "again" re-queued a copy further on; drop that copy before putting the
                     // card back where it was.
                     if wasAgain, let copy = queue.indices.last(where: { $0 >= at && queue[$0].id == item.id }) {
@@ -729,7 +757,9 @@ struct PracticeView: View {
 
     private func header(_ item: ReviewItem) -> some View {
         HStack(spacing: 8) {
-            if let focus = session.focusDeck {
+            if let run = session.practiceRun {
+                FocusDeckChip(title: run.title, note: "schedule unchanged") { session.leaveDeck() }
+            } else if let focus = session.focusDeck {
                 FocusDeckChip(title: focus.title) { session.leaveDeck() }
             } else if let deck = item.folder?.name {
                 Text(deck.uppercased())
@@ -1165,10 +1195,13 @@ struct PracticeView: View {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 30, weight: .light))
                     .foregroundColor(PluckkTheme.accent)
-                if let focus = session.focusDeck {
+                if let run = session.practiceRun {
+                    FocusDeckChip(title: run.title, note: "schedule unchanged") { session.leaveDeck() }
+                } else if let focus = session.focusDeck {
                     FocusDeckChip(title: focus.title) { session.leaveDeck() }
                 }
-                Text(session.aheadState == .noneLeft ? "No new cards left" : session.reviewedCount > 0 ? "Session done" : (session.focusDeck != nil ? "Nothing due in this deck" : "Nothing due right now"))
+                Text(session.practiceRun != nil ? (session.reviewedCount > 0 ? "Practice done" : "Nothing to practise here")
+                     : session.aheadState == .noneLeft ? "No new cards left" : session.reviewedCount > 0 ? "Session done" : (session.focusDeck != nil ? "Nothing due in this deck" : "Nothing due right now"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(primaryText)
                 if session.reviewedCount > 0 {
@@ -1194,7 +1227,10 @@ struct PracticeView: View {
                     if session.canUndo {
                         Button("Undo last") { session.undo() }.buttonStyle(PillButtonStyle(prominent: false))
                     }
-                    if offerExtra {
+                    if session.practiceRun != nil {
+                        Button("Practise again") { session.start() }.buttonStyle(PillButtonStyle(prominent: false))
+                        Button("Back to the schedule") { session.leaveDeck() }.buttonStyle(PillButtonStyle(prominent: true))
+                    } else if offerExtra {
                         Button("Add them", action: practiceAhead).buttonStyle(PillButtonStyle(prominent: true))
                     } else {
                         Button("Start another") { session.start() }.buttonStyle(PillButtonStyle(prominent: true))
@@ -1342,6 +1378,7 @@ struct CopyCardIDButton: View {
 /// "Practising <deck> ✕": shown while one deck is being practised; ✕ returns to the mix.
 struct FocusDeckChip: View {
     let title: String
+    var note: String? = nil
     let onLeave: () -> Void
     @State private var hovering = false
 
@@ -1354,6 +1391,9 @@ struct FocusDeckChip: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(PluckkTheme.accent)
                 .lineLimit(1)
+            if let note {
+                Text("· \(note)").font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+            }
             Button(action: onLeave) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     .foregroundColor(Color.primary.opacity(hovering ? 0.8 : 0.45))
@@ -1444,3 +1484,4 @@ struct RatingButton: View {
         .onHover { hovering = $0 }
     }
 }
+

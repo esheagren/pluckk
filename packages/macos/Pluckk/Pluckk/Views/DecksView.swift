@@ -561,3 +561,10 @@ func practise(_ deck: DeckSummary) {
     PracticeSession.shared.practice(deck: deck)
     AppState.shared.currentView = .practice
 }
+
+/// Practise cards outside the schedule (a deck, its learned or missed cards, or picked cards).
+@MainActor
+func practiseRun(_ run: PracticeSession.PracticeRun) {
+    PracticeSession.shared.practise(run)
+    AppState.shared.currentView = .practice
+}

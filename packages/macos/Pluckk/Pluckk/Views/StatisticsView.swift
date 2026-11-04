@@ -215,41 +215,81 @@ struct StatisticsView: View {
     }
 
     /// The selected deck alone: its cards a day, and how long its new cards last at that rate.
-    @ViewBuilder private var deckRows: some View {
-        if let deck = shownDeck {
-            HStack(spacing: 10) {
-                Circle().fill(active.contains(deck) ? color(deck) : Color.secondary).frame(width: 9, height: 9)
-                Text(deck.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if active.contains(deck) {
-                    HStack(spacing: 4) {
+    /// Every deck, in a results-style table: a colour bar, then figures. Decks still sharing new
+    /// cards come first, with their limits; the rest sit under a rule, quieter but still a click
+    /// away. Clicking a row opens its cards on the right.
+    private var deckRows: some View {
+        let others = decks.filter { !active.contains($0) }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("All decks").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                header("New left", 58)
+                header("Due", 36)
+                header("Learned", 54)
+                header("A day", 82)
+            }
+            .padding(.bottom, 6)
+            Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 1)
+            ForEach(active) { deckRow($0, live: true) }
+            if !others.isEmpty {
+                Text("NOTHING NEW LEFT OR PAUSED")
+                    .font(.system(size: 9, weight: .semibold)).tracking(0.6)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 12).padding(.bottom, 4)
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+                ForEach(others) { deckRow($0, live: false) }
+            }
+        }
+    }
+
+    private func header(_ text: String, _ width: CGFloat) -> some View {
+        Text(text).font(.system(size: 10)).foregroundColor(.secondary).frame(width: width, alignment: .trailing)
+    }
+
+    private func deckRow(_ deck: DeckSummary, live: Bool) -> some View {
+        let open = shownDeck?.id == deck.id
+        return HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 1.5).fill(live ? color(deck) : Color.secondary.opacity(0.4)).frame(width: 4, height: 18)
+            Text(deck.title)
+                .font(.system(size: 13, weight: open ? .semibold : .regular))
+                .foregroundColor(live ? .primary : .secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            figure(deck.new, 58, bold: live)
+            figure(deck.due, 36)
+            figure(max(0, deck.total - deck.new), 54)
+            Group {
+                if live {
+                    HStack(spacing: 2) {
                         stepButton("minus") { setLimit(deck, limit(deck) - 1) }
                         TextField("", text: Binding(get: { String(limit(deck)) }, set: { setLimit(deck, Int($0) ?? 0) }))
                             .textFieldStyle(.plain)
-                            .font(.system(size: 13, weight: .medium).monospacedDigit())
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
                             .multilineTextAlignment(.center)
-                            .frame(width: 34, height: 20)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
+                            .frame(width: 30, height: 18)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.08)))
                         stepButton("plus") { setLimit(deck, limit(deck) + 1) }
                     }
-                    Text(finishEstimate(deck))
-                        .font(.system(size: 12).monospacedDigit())
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .frame(minWidth: 70, alignment: .trailing)
+                    .help("New cards a day · \(finishEstimate(deck))")
                 } else {
-                    Text(deck.is_paused ? "paused" : "no new cards")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                    Text(deck.is_paused ? "paused" : "—").font(.system(size: 12)).foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
-            .id(deck.id)
-            .transition(.opacity)
+            .frame(width: 82, alignment: .trailing)
         }
+        .padding(.vertical, 5).padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(open ? Color.primary.opacity(0.07) : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { openDeck = deck }
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.05)).frame(height: 1) }
+    }
+
+    private func figure(_ n: Int, _ width: CGFloat, bold: Bool = false) -> some View {
+        Text(n.formatted())
+            .font(.system(size: 12, weight: bold ? .semibold : .regular).monospacedDigit())
+            .foregroundColor(n == 0 ? .secondary : .primary)
+            .frame(width: width, alignment: .trailing)
     }
 
     private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {

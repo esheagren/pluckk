@@ -276,6 +276,17 @@ class PluckkAPI {
         return try JSONDecoder().decode(Response.self, from: data).items
     }
 
+    /// Cards to practise now, whatever their schedule: a deck (optionally only its learned or
+    /// recently missed cards) or cards picked by id, in that order.
+    func practiceSession(token: String, folderId: String??, cardIds: [String]?, filter: String) async throws -> [ReviewItem] {
+        struct Response: Decodable { let items: [ReviewItem] }
+        var body: [String: Any] = ["filter": filter]
+        if let folderId { body["folder_id"] = folderId.map { $0 as Any } ?? NSNull() }
+        if let cardIds { body["card_ids"] = cardIds }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/practice", json: body)
+        return try JSONDecoder().decode(Response.self, from: data).items
+    }
+
     /// What's left for today across the mix, by the same rules that deal a session.
     func reviewToday(token: String) async throws -> TodayCounts {
         let data = try await send(token: token, method: "GET", path: "/api/v1/review/today")
@@ -283,17 +294,18 @@ class PluckkAPI {
     }
 
     struct ReviewResult: Decodable {
-        let event_id: String
+        let event_id: String?   // nil for a practice rating that changed nothing
         let previews: IntervalPreviews
     }
 
     /// `interval` is a number card's range; the server records it with the rating.
     func submitReview(token: String, item: ReviewItem, rating: ReviewRating, responseMs: Int,
-                      interval: (lower: Double, upper: Double)? = nil) async throws -> ReviewResult {
+                      interval: (lower: Double, upper: Double)? = nil, practice: Bool = false) async throws -> ReviewResult {
         var body: [String: Any] = [
             "card_id": item.card_id, "component_id": item.component_id,
             "rating": rating.rawValue, "response_time_ms": responseMs,
         ]
+        if practice { body["practice"] = true }
         if let interval { body["interval"] = ["lower": interval.lower, "upper": interval.upper] }
         let data = try await send(token: token, method: "POST", path: "/api/v1/review", json: body)
         return try JSONDecoder().decode(ReviewResult.self, from: data)
