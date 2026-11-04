@@ -9,6 +9,11 @@
 // The host is the Mac app (WKWebView, messages through webkit.messageHandlers.pluckk) or a web
 // page (sandboxed iframe, messages through postMessage). See docs/roadmap/planned/card-modules/plan.md.
 (function () {
+  // A module never scrolls: the host sizes it to its content. A scroll bar appearing would
+  // narrow the page, change its height and loop with the host's resizing.
+  const noScroll = document.createElement('style');
+  noScroll.textContent = 'html, body { overflow: hidden !important; }';
+  document.head.appendChild(noScroll);
   const handlers = {};
   let capabilities = {};
   const toHost = (msg) => {
@@ -38,18 +43,23 @@
     document.documentElement.dataset.theme = theme.dark ? 'dark' : 'light';
   }
 
-  let lastHeight = 0;
+  let lastHeight = 0, pending = false;
   function reportHeight() {
-    const h = Math.ceil(document.body.getBoundingClientRect().height);
-    if (h !== lastHeight) { lastHeight = h; toHost({ type: 'resize', height: h }); }
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {   // at most once a frame, and only real changes
+      pending = false;
+      const h = Math.ceil(document.body.getBoundingClientRect().height);
+      if (Math.abs(h - lastHeight) > 1) { lastHeight = h; toHost({ type: 'resize', height: h }); }
+    });
   }
 
   window.Pluckk = {
     on(type, fn) { handlers[type] = fn; },
     ready() {
-      new ResizeObserver(reportHeight).observe(document.body);
-      reportHeight();
+      lastHeight = Math.ceil(document.body.getBoundingClientRect().height);
       toHost({ type: 'ready', height: lastHeight });
+      new ResizeObserver(reportHeight).observe(document.body);
     },
     respond(data, score, summary) {
       toHost({ type: 'response', data, score: Math.max(0, Math.min(1, Number(score) || 0)), summary: summary || null });
