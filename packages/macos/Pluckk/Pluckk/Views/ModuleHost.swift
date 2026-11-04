@@ -95,7 +95,7 @@ private struct ModuleWebView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> ModuleContainer {
         let config = WKWebViewConfiguration()
         // The handler is held weakly through a proxy: WKUserContentController keeps a strong one.
         config.userContentController.add(WeakHandler(context.coordinator), name: "pluckk")
@@ -106,10 +106,10 @@ private struct ModuleWebView: NSViewRepresentable {
         if let path = module.path, let url = URL(string: "\(Config.backendURL)/modules/\(path)/index.html") {
             web.load(URLRequest(url: url))
         }
-        return web
+        return ModuleContainer(web)
     }
 
-    func updateNSView(_ web: WKWebView, context: Context) {
+    func updateNSView(_ container: ModuleContainer, context: Context) {
         let c = context.coordinator
         c.parent = self
         if revealed && !c.sentReveal && c.loaded {
@@ -122,8 +122,8 @@ private struct ModuleWebView: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
-        web.configuration.userContentController.removeScriptMessageHandler(forName: "pluckk")
+    static func dismantleNSView(_ container: ModuleContainer, coordinator: Coordinator) {
+        container.web.configuration.userContentController.removeScriptMessageHandler(forName: "pluckk")
         ModuleSpeech.shared.stop()
     }
 
@@ -143,6 +143,28 @@ private struct ModuleWebView: NSViewRepresentable {
         var sentReveal = false
         var lastDark: Bool
         var responded = false
+        private var heights: [CGFloat] = []
+        private var settled: CGFloat?
+
+        /// A module's height, applied only when it's a real change. If it starts flipping between
+        /// two values (content and layout feeding each other), keep the larger one for good.
+        func apply(height h: CGFloat) {
+            if let settled { if h > settled + 1 { self.settled = h; set(h) }; return }
+            if heights.count >= 2, abs(heights[heights.count - 2] - h) <= 1, abs(heights.last! - h) > 1 {
+                let keep = max(h, heights.last!)
+                settled = keep
+                set(keep)
+                return
+            }
+            heights.append(h)
+            if heights.count > 6 { heights.removeFirst() }
+            set(h)
+        }
+
+        private func set(_ h: CGFloat) {
+            guard abs(parent.height - h) > 1 else { return }
+            parent.height = h
+        }
 
         init(_ parent: ModuleWebView) {
             self.parent = parent
@@ -178,10 +200,8 @@ private struct ModuleWebView: NSViewRepresentable {
             switch type {
             case "ready", "resize":
                 if let h = body["height"] as? Double, h > 0 {
-                    let height = CGFloat(min(h, 900))
-                    DispatchQueue.main.async { [weak self] in
-                        if self?.parent.height != height { self?.parent.height = height }
-                    }
+                    let height = CGFloat(min(h, 900)).rounded()
+                    DispatchQueue.main.async { [weak self] in self?.apply(height: height) }
                 }
             case "response":
                 guard parent.slot == .respond, !responded, let score = body["score"] as? Double else { return }
@@ -205,6 +225,25 @@ private struct ModuleWebView: NSViewRepresentable {
             target?.userContentController(c, didReceive: m)
         }
     }
+}
+
+/// Holds the web view so its own layout changes stay inside: SwiftUI sees a plain view with no
+/// size of its own and gives it the frame the module asked for.
+final class ModuleContainer: NSView {
+    let web: WKWebView
+
+    init(_ web: WKWebView) {
+        self.web = web
+        super.init(frame: .zero)
+        web.autoresizingMask = [.width, .height]
+        web.frame = bounds
+        addSubview(web)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override var isFlipped: Bool { true }
 }
 
 /// The Mac's own voices, for modules that read things aloud (Tingting for zh-CN).
