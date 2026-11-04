@@ -9,6 +9,15 @@ describe('api schemas', () => {
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.error).toMatch(/spec or question\+answer/);
   });
+  it('a simple spec may carry modules in its prompt, respond and reveal slots', () => {
+    const spec = {
+      style: 'qa', question: 'Click on Chengdu', answer: 'Chengdu',
+      modules: { respond: { use: 'geo-map@1', props: { map: 'china-provinces', target: { lat: 30.67, lon: 104.07 } } },
+                 reveal: [{ use: 'speak@1', props: { text: '成都', lang: 'zh-CN' } }] },
+    };
+    expect(cardSpecSchema.safeParse(spec).success).toBe(true);
+    expect(cardSpecSchema.safeParse({ ...spec, modules: { prompt: [{ use: 'geo-map' }] } }).success).toBe(false);
+  });
   it('rejects a spec with an unknown style or an empty list', () => {
     expect(cardSpecSchema.safeParse({ style: 'haiku', question: 'q', answer: 'a' }).success).toBe(false);
     expect(cardSpecSchema.safeParse({ style: 'cloze_list', listName: 'l', items: [], prompts: [] }).success).toBe(false);

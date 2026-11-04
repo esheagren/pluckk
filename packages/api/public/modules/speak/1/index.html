@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; font: 14px -apple-system, system-ui, sans-serif; }
+  body { display: flex; justify-content: center; padding: 2px 0; }
+  button {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    border: 1px solid var(--rule, #ddd); border-radius: 999px; background: transparent;
+    color: var(--text, #333); padding: 5px 14px 5px 11px; font: inherit;
+  }
+  button:hover { border-color: var(--accent, #c9a66b); }
+  button.playing svg { color: var(--accent, #c9a66b); }
+  svg { width: 16px; height: 16px; color: var(--muted, #999); }
+  .label { font-size: 15px; }
+</style>
+</head>
+<body>
+<button id="b" type="button" title="Play">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>
+  </svg>
+  <span class="label" id="l"></span>
+</button>
+<script src="../../pluckk-module.js"></script>
+<script>
+  // speak@1 — props: { text, lang = 'zh-CN', label = text, autoplay = true }
+  // In the reveal slot it plays once when the answer shows; the button replays it.
+  const b = document.getElementById('b');
+  let props = {};
+  function play() {
+    if (!props.text) return;
+    Pluckk.speak(props.text, props.lang || 'zh-CN');
+    b.classList.add('playing');
+    setTimeout(() => b.classList.remove('playing'), 900);
+  }
+  b.addEventListener('click', play);
+  Pluckk.on('init', (m) => {
+    props = m.props || {};
+    document.getElementById('l').textContent = props.label ?? props.text ?? '';
+    Pluckk.ready();
+    const shown = m.slot === 'reveal' || m.slot === 'prompt';
+    if (shown && props.autoplay !== false) setTimeout(play, 150);
+  });
+</script>
+</body>
+</html>

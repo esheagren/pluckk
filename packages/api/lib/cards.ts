@@ -28,7 +28,7 @@ export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSp
     throw new CardError(400, 'This card has several components; edit it with a full spec');
   }
   const base = current ?? null;  // narrowed to a simple spec by the guard above
-  return specFromLegacy({
+  const spec = specFromLegacy({
     question: b.question ?? base?.question ?? '',
     answer: b.answer ?? base?.answer ?? '',
     style: b.style ?? base?.style ?? 'qa',
@@ -39,6 +39,11 @@ export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSp
     numericUnit: 'numeric_unit' in b ? b.numeric_unit : base?.numeric?.unit,
     numericPrecision: 'numeric_precision' in b ? b.numeric_precision : base?.numeric?.precision,
   });
+  // The flat form has no modules: an edit of the text keeps the card's own.
+  if (base && 'modules' in base && base.modules && spec.style !== 'qa_bidirectional' && spec.style !== 'cloze_list') {
+    spec.modules = base.modules;
+  }
+  return spec;
 }
 
 export function provenanceFromBody(b: CreateCardBody | PatchCardBody, current?: Provenance | null): Provenance | null {

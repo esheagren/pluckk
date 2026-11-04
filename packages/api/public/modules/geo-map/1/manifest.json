@@ -1,0 +1,19 @@
+{
+  "id": "geo-map",
+  "version": "1.0.0",
+  "slots": ["prompt", "respond"],
+  "describe": "A map from Pluckk's map library (/maps/<id>.json). In prompt it fills the region `highlight` and/or dots the point `mark`. In respond the user clicks once: a point `target` {lat, lon} scores exp(-km / tolerance_km), where tolerance defaults to 6% of the map's diagonal; a region `target` {region} scores 1 inside, 0 outside. On reveal the target shows (with `label`) beside the click.",
+  "props": {
+    "type": "object",
+    "required": ["map"],
+    "properties": {
+      "map": { "type": "string", "description": "Map id, e.g. china-provinces" },
+      "highlight": { "type": "string", "description": "Region id to fill, e.g. CN-GD" },
+      "mark": { "type": "object", "properties": { "lat": { "type": "number" }, "lon": { "type": "number" } } },
+      "target": { "type": "object", "properties": { "lat": { "type": "number" }, "lon": { "type": "number" }, "region": { "type": "string" } } },
+      "label": { "type": "string", "description": "Name drawn at the target on reveal" },
+      "tolerance_km": { "type": "number" },
+      "max_height": { "type": "number" }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+[
+  { "slot": "prompt", "props": { "map": "china-provinces", "highlight": "CN-GD" } },
+  { "slot": "prompt", "props": { "map": "china-provinces", "highlight": "CN-SH" } },
+  { "slot": "respond", "props": { "map": "china-provinces", "target": { "lat": 30.67, "lon": 104.07 }, "label": "Chengdu" } },
+  { "slot": "respond", "props": { "map": "china-provinces", "target": { "region": "CN-SC" } } }
+]

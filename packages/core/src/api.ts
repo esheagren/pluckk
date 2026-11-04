@@ -22,6 +22,17 @@ const numericSchema = z.object({
   precision: z.number().int().nullish(),
 });
 
+const moduleUseSchema = z.object({
+  use: z.string().regex(/^[a-z0-9-]+@\d+$/, 'use is "<module id>@<major version>"'),
+  props: z.record(z.string(), z.unknown()).optional(),
+});
+
+const modulesSchema = z.object({
+  prompt: z.array(moduleUseSchema).max(4).optional(),
+  respond: moduleUseSchema.nullish(),
+  reveal: z.array(moduleUseSchema).max(4).optional(),
+});
+
 /** Card spec, wire form (camelCase inside the spec object — it is stored as JSON verbatim). */
 export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style', [
   z.object({
@@ -30,6 +41,7 @@ export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style',
     answer: z.string().min(1),
     answerType: z.enum(['text', 'numeric']).optional(),
     numeric: numericSchema.nullish(),
+    modules: modulesSchema.nullish(),
   }),
   z.object({ style: z.literal('qa_bidirectional'), forward: qaSchema, reverse: qaSchema }),
   z.object({ style: z.literal('cloze_list'), listName: z.string(), items: z.array(z.string()), prompts: z.array(qaSchema).min(1) }),

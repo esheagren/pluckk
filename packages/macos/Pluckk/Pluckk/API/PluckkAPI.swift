@@ -576,6 +576,8 @@ struct ReviewItem: Decodable, Identifiable {
     var numeric_unit: String?
     let provenance: Provenance?
     let source_selection: String?
+    /// Card modules (maps, audio…), passed through verbatim; see Views/ModuleHost.swift.
+    var modules: CardModules?
 
     struct Provenance: Decodable {
         let identifier: String?
@@ -604,6 +606,12 @@ struct ReviewItem: Decodable, Identifiable {
 
     /// Answered with a 95% range rather than recalled and rated.
     var isNumeric: Bool { answer_type == "numeric" && numeric_answer != nil }
+
+    /// Answered inside a module (a click on a map…), which suggests the rating.
+    var respondModule: ModuleUse? { modules?.respond.flatMap { $0.path == nil ? nil : $0 } }
+
+    /// The card waits for an answer (a range or a module's) before it reveals on Space or a click.
+    var answersFirst: Bool { isNumeric || respondModule != nil }
 
     /// The question as shown on a number card: an older "(90% interval)" note gives way to the
     /// range input, which says 95%.

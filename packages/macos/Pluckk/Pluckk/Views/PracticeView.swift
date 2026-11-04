@@ -266,11 +266,11 @@ final class PracticeSession: ObservableObject {
             var handled = true
             switch event.keyCode {
             case 49:                                    // Space
-                if self.current?.isNumeric == true && !self.revealed { handled = false }   // the range comes first
+                if self.current?.answersFirst == true && !self.revealed { handled = false }   // the answer comes first
                 else if !self.revealed { self.reveal() }
-                else if let outcome = self.outcome { self.rate(outcome.rating) }
-            case 36, 76:                                // Return: keep a number card's suggested rating
-                if self.revealed, let outcome = self.outcome { self.rate(outcome.rating) } else { handled = false }
+                else if let suggested = self.suggestedRating { self.rate(suggested) }
+            case 36, 76:                                // Return: keep the suggested rating
+                if self.revealed, let suggested = self.suggestedRating { self.rate(suggested) } else { handled = false }
             case 18, 19, 20, 21, 23:                    // 1–5
                 guard self.revealed else { handled = false; break }
                 let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy, 23: .trivial][event.keyCode]!
@@ -343,6 +343,19 @@ final class PracticeSession: ObservableObject {
         let contained: Bool
     }
     @Published private(set) var outcome: IntervalOutcome?
+
+    /// What a card's respond module scored, once it's answered.
+    @Published private(set) var moduleResponse: ModuleResponse?
+
+    /// The rating a range or a module suggests; Space or Return keeps it.
+    var suggestedRating: ReviewRating? { outcome?.rating ?? moduleResponse?.rating }
+
+    func moduleResponded(_ response: ModuleResponse, for item: ReviewItem) {
+        guard current?.id == item.id, !revealed else { return }
+        moduleResponse = response
+        withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+        startSprintIfIdle()
+    }
 
     func lockInterval(_ lower: Double, _ upper: Double) {
         guard let item = current, item.isNumeric, !revealed, !busy, let token = AuthManager.shared.accessToken else { return }
@@ -566,6 +579,7 @@ final class PracticeSession: ObservableObject {
         editing = false
         revealed = false
         outcome = nil
+        moduleResponse = nil
         reading = nil
         shownAt = Date()
         if index >= queue.count { phase = .done }
@@ -766,7 +780,7 @@ struct PracticeView: View {
         .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !session.editing, !(item.isNumeric && !session.revealed) else { return }
+            guard !session.editing, !(item.answersFirst && !session.revealed) else { return }
             PluckkPanel.shared?.hostWindow.makeFirstResponder(nil)   // a click on the card clears a selection
             session.reveal()
         }
@@ -792,6 +806,15 @@ struct PracticeView: View {
                 cardImage(url)
             }
 
+            ForEach(Array((item.modules?.prompt ?? []).enumerated()), id: \.offset) { _, module in
+                ModuleSlotView(module: module, slot: .prompt)
+            }
+            if let module = item.respondModule {
+                ModuleSlotView(module: module, slot: .respond, revealed: session.revealed) {
+                    session.moduleResponded($0, for: item)
+                }
+            }
+
             if item.isNumeric && !session.revealed {
                 IntervalEntry(unit: item.numeric_unit, busy: session.busy) { session.lockInterval($0, $1) }
                     .padding(.top, 6)
@@ -799,6 +822,11 @@ struct PracticeView: View {
 
             if session.revealed {
                 if let outcome = session.outcome { IntervalReveal(outcome: outcome).padding(.top, 4) }
+                if let response = session.moduleResponse, let summary = response.summary {
+                    Text(summary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(response.score >= 0.7 ? PluckkTheme.Dark.success : Color(hex: "e5a14b"))
+                }
                 Rectangle().fill(rule).frame(height: 1)
                 Text(cardMarkdown(item.answer))
                     .textSelection(.enabled)
@@ -808,6 +836,9 @@ struct PracticeView: View {
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
+                ForEach(Array((item.modules?.reveal ?? []).enumerated()), id: \.offset) { _, module in
+                    ModuleSlotView(module: module, slot: .reveal, revealed: true)
+                }
                 if let url = item.image_url.flatMap(URL.init(string:)) {
                     cardImage(url)
                 }
@@ -1090,19 +1121,24 @@ struct PracticeView: View {
             }
         } else if session.revealed {
             VStack(spacing: 8) {
-                if let outcome = session.outcome {
-                    Text("Your range suggests \(outcome.rating.title). Space or ↩ keeps it, or pick another.")
+                if let suggested = session.suggestedRating {
+                    Text("\(session.outcome != nil ? "Your range" : "Your answer") suggests \(suggested.title). Space or ↩ keeps it, or pick another.")
                         .font(.system(size: 12))
                         .foregroundColor(mutedText)
                 }
                 HStack(spacing: 8) {
                     ForEach(ReviewRating.allCases, id: \.self) { rating in
                         RatingButton(rating: rating, interval: item.previews.label(for: rating),
-                                     suggested: session.outcome?.rating == rating) { session.rate(rating) }
+                                     suggested: session.suggestedRating == rating) { session.rate(rating) }
                             .disabled(session.busy)
                     }
                 }
             }
+        } else if item.respondModule != nil {
+            Button("Show the answer") { session.reveal() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(mutedText)
         } else if item.isNumeric {
             Button("Show the answer without a range") { session.reveal() }
                 .buttonStyle(.plain)

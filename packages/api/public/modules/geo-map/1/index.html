@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'">
+<style>
+  html, body { margin: 0; background: transparent; font: 12px -apple-system, system-ui, sans-serif; }
+  canvas { display: block; width: 100%; }
+  canvas.ask { cursor: crosshair; }
+  #credit { text-align: right; color: var(--muted, #999); font-size: 9px; opacity: 0.7; padding-top: 2px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="credit"></div>
+<script src="../../pluckk-module.js"></script>
+<script>
+// geo-map@1
+// props: { map: "<id in /maps>", highlight?: "<region id>", mark?: {lat, lon},
+//          target?: {lat, lon} | {region}, label?: "<name shown at the target on reveal>",
+//          tolerance_km?: number, max_height?: number }
+// prompt slot: draws the map with `highlight` filled and/or `mark` dotted.
+// respond slot: one click answers. A point target scores exp(-km / tolerance); a region target
+// scores 1 inside it and 0 outside. On reveal the right answer appears beside the click.
+const R = 6371;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let props = {}, slot = 'prompt', map = null, proj = null, fit = null;
+let guess = null, revealed = false;
+
+function albers({ lon0, lat1, lat2, lat0 = 0 }) {
+  const rad = Math.PI / 180, p1 = lat1 * rad, p2 = lat2 * rad;
+  const n = (Math.sin(p1) + Math.sin(p2)) / 2, C = Math.cos(p1) ** 2 + 2 * n * Math.sin(p1);
+  const rho0 = Math.sqrt(C - 2 * n * Math.sin(lat0 * rad)) / n;
+  return {
+    fwd(lon, lat) {
+      const rho = Math.sqrt(C - 2 * n * Math.sin(lat * rad)) / n, t = n * (lon - lon0) * rad;
+      return [rho * Math.sin(t), rho0 - rho * Math.cos(t)];
+    },
+    inv(x, y) {
+      const dy = rho0 - y, rho = Math.sign(n) * Math.hypot(x, dy), t = Math.atan2(x, dy);
+      return [lon0 + t / n / rad, Math.asin((C - (rho * n) ** 2) / (2 * n)) / rad];
+    },
+  };
+}
+function equirect({ lat0 = 0 }) {
+  const k = Math.cos(lat0 * Math.PI / 180);
+  return { fwd: (lon, lat) => [lon * k, lat], inv: (x, y) => [x / k, y] };
+}
+
+function km(a, b) {
+  const rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function inRing(ring, lon, lat) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+const regionAt = (lon, lat) => map.regions.find((r) => r.rings.some((ring) => inRing(ring, lon, lat)));
+const regionById = (id) => map.regions.find((r) => r.id === id);
+
+function layout() {
+  const [x0, y0, x1, y1] = map.view;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i <= 20; i++) for (let j = 0; j <= 20; j++) {
+    const [x, y] = proj.fwd(x0 + (x1 - x0) * i / 20, y0 + (y1 - y0) * j / 20);
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const w = document.body.clientWidth || 600;
+  const h = Math.min(props.max_height || 440, w * (maxY - minY) / (maxX - minX));
+  const s = Math.min(w / (maxX - minX), h / (maxY - minY));
+  const ox = (w - (maxX - minX) * s) / 2, oy = (h - (maxY - minY) * s) / 2;
+  fit = { w, h, s, toPx: ([x, y]) => [ox + (x - minX) * s, oy + (maxY - y) * s],
+          fromPx: (px, py) => [minX + (px - ox) / s, maxY - (py - oy) / s] };
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+const px = (lon, lat) => fit.toPx(proj.fwd(lon, lat));
+function path(rings) {
+  ctx.beginPath();
+  for (const ring of rings) ring.forEach(([lon, lat], i) => {
+    const [x, y] = px(lon, lat);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+}
+function bboxPx(region) {
+  let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+  for (const ring of region.rings) for (const [lon, lat] of ring) {
+    const [x, y] = px(lon, lat); a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y);
+  }
+  return { x: (a + c) / 2, y: (b + d) / 2, size: Math.max(c - a, d - b) };
+}
+function fillRegion(region, color) {
+  ctx.fillStyle = color; path(region.rings); ctx.fill('evenodd');
+  const box = bboxPx(region);
+  if (box.size < 14) {       // too small to see: ring it
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(box.x, box.y, 11, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+function dot(lon, lat, color, r = 5) {
+  const [x, y] = px(lon, lat);
+  ctx.fillStyle = color; ctx.strokeStyle = Pluckk.color('surface', '#fff'); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+}
+function label(lon, lat, text, color) {
+  const [x, y] = px(lon, lat);
+  ctx.font = '600 12px -apple-system, system-ui, sans-serif';
+  ctx.fillStyle = color; ctx.strokeStyle = Pluckk.color('surface', '#fff'); ctx.lineWidth = 3;
+  ctx.strokeText(text, x + 9, y + 4); ctx.fillText(text, x + 9, y + 4);
+}
+
+function draw() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const text = Pluckk.color('text', dark ? '#f5f5f5' : '#2d3436');
+  const accent = Pluckk.color('accent', '#c9a66b');
+  const good = Pluckk.color('success', '#27ae60');
+  const miss = Pluckk.color('warning', '#e5a14b');
+  ctx.clearRect(0, 0, fit.w, fit.h);
+  ctx.lineJoin = 'round';
+  // Neighbours: a whisper of land so the shape reads.
+  ctx.fillStyle = dark ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.035)';
+  ctx.strokeStyle = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)';
+  ctx.lineWidth = 0.6;
+  for (const c of map.context) { path(c.rings); ctx.fill('evenodd'); ctx.stroke(); }
+  // The map's own regions.
+  ctx.fillStyle = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  for (const r of map.regions) { path(r.rings); ctx.fill('evenodd'); }
+  if (props.highlight && regionById(props.highlight)) fillRegion(regionById(props.highlight), accent);
+  const t = props.target;
+  if (revealed && t && t.region && regionById(t.region)) fillRegion(regionById(t.region), good);
+  ctx.strokeStyle = dark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 0.7;
+  for (const r of map.regions) { path(r.rings); ctx.stroke(); }
+  if (props.mark) dot(props.mark.lon, props.mark.lat, accent);
+  if (revealed && t && t.lat != null) {
+    if (guess) {
+      const [ax, ay] = px(guess.lon, guess.lat), [bx, by] = px(t.lon, t.lat);
+      ctx.strokeStyle = text; ctx.globalAlpha = 0.5; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    dot(t.lon, t.lat, good, 6);
+    if (props.label) label(t.lon, t.lat, props.label, text);
+  }
+  if (guess) dot(guess.lon, guess.lat, revealed && guess.score >= 0.7 ? good : miss);
+}
+
+canvas.addEventListener('click', (e) => {
+  if (slot !== 'respond' || guess || revealed || !map) return;
+  const rect = canvas.getBoundingClientRect();
+  const [lon, lat] = proj.inv(...fit.fromPx(e.clientX - rect.left, e.clientY - rect.top));
+  const t = props.target || {};
+  let score, summary, data = { lat: +lat.toFixed(4), lon: +lon.toFixed(4) };
+  if (t.region) {
+    const hit = regionAt(lon, lat);
+    score = hit && hit.id === t.region ? 1 : 0;
+    summary = score ? 'Right region' : hit ? `That's ${hit.name}` : 'Outside the map';
+    data.region = hit ? hit.id : null;
+  } else {
+    const [x0, y0, x1, y1] = map.view;
+    const diag = km({ lat: y0, lon: x0 }, { lat: y1, lon: x1 });
+    const d = km({ lat, lon }, t);
+    score = Math.exp(-d / (props.tolerance_km || diag * 0.06));
+    summary = `${d < 10 ? d.toFixed(1) : Math.round(d).toLocaleString()} km away`;
+    data.km = Math.round(d);
+  }
+  guess = { lat, lon, score };
+  canvas.classList.remove('ask');
+  draw();
+  Pluckk.respond(data, score, summary);
+});
+
+Pluckk.on('init', async (m) => {
+  props = m.props || {}; slot = m.slot; revealed = !!m.revealed;
+  try {
+    const res = await fetch(`/maps/${encodeURIComponent(props.map)}.json`);
+    map = await res.json();
+  } catch (e) {
+    document.body.textContent = `Couldn't load the map "${props.map}".`;
+    Pluckk.ready(); return;
+  }
+  const p = map.projection || {};
+  proj = p.type === 'albers' ? albers(p) : equirect(p);
+  document.getElementById('credit').textContent = map.attribution || '';
+  if (slot === 'respond') canvas.classList.add('ask');
+  layout(); draw(); Pluckk.ready();
+});
+Pluckk.on('reveal', () => { revealed = true; canvas.classList.remove('ask'); if (map) draw(); });
+Pluckk.on('theme', () => { if (map) draw(); });
+let lastW = 0;
+new ResizeObserver(() => {
+  if (!map || document.body.clientWidth === lastW) return;
+  lastW = document.body.clientWidth; layout(); draw();
+}).observe(document.body);
+</script>
+</body>
+</html>

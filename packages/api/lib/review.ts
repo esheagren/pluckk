@@ -64,6 +64,8 @@ export async function buildItems(db: Db, userId: string, dealt: DealtItem[]) {
       is_new: !stateRow || stateRow.status === 'new',
       review_state: stateRow ? snake(stateRow) : null,
       previews: defaultScheduler.preview(state, now),
+      // Verbatim, not snake_cased: module props are the module's own keys.
+      modules: 'modules' in spec ? spec.modules ?? null : null,
     });
   }
   return items;
