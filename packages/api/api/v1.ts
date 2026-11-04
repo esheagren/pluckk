@@ -17,12 +17,12 @@ import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { put } from '@vercel/blob';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
 import { buildItems, stateFromRow } from '../lib/review.js';
-import { loadEvents } from '../lib/store.js';
+import { commit, loadEvents } from '../lib/store.js';
 import { Router, pathSegments, type RouteHandler } from '../lib/router.js';
 import { snake, pick, isoTimestamp } from '../lib/serialize.js';
 
@@ -263,6 +263,10 @@ router.on('POST', 'review', authed(async (req, res, user) => {
   const outcome = body.interval && answer ? rateInterval(answer.value, body.interval.lower, body.interval.upper, answer.unit) : null;
   const rating = body.rating ?? outcome?.rating;
   if (!rating) { res.status(400).json({ error: 'rating or interval required' }); return; }
+  if (body.practice) {
+    res.status(200).json(await practiseCard(db, user.id, body.card_id, body.component_id ?? MAIN_COMPONENT, rating, body.response_time_ms ?? null));
+    return;
+  }
   const r = await reviewCard(db, user.id, body.card_id, rating, {
     componentId: body.component_id ?? MAIN_COMPONENT, sessionId: body.session_id ?? null, responseMs: body.response_time_ms ?? null,
   });
@@ -281,6 +285,74 @@ router.on('POST', 'review', authed(async (req, res, user) => {
     reviewedAt: r.state.lastReviewedAt ?? new Date().toISOString(),
   });
   res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating });
+}));
+
+// Practice outside the schedule. The rating is logged (review_mode 'practice') but the card keeps
+// its due date, so rehearsing a deck early doesn't push it weeks out. The one exception: "again"
+// on a card due later than tomorrow brings it back tomorrow. New cards stay new.
+async function practiseCard(db: ReturnType<typeof getDb>, userId: string, cardId: string, componentId: string, rating: string, responseMs: number | null) {
+  const row = await getCardRow(db, userId, cardId);
+  const ids = componentIdsOf(specOf(row));
+  const component = ids.includes(componentId) ? componentId : ids[0];
+  const [stateRow] = await db.select().from(schema.cardReviewState).where(and(
+    eq(schema.cardReviewState.cardId, cardId), eq(schema.cardReviewState.userId, userId), eq(schema.cardReviewState.componentId, component)));
+  const now = new Date();
+  let eventId: string | null = null;
+  if (stateRow && stateRow.status !== 'new') {
+    const state = stateFromRow(stateRow);
+    const tomorrow = new Date(now.getTime() + 86400000);
+    if (rating === 'again' && new Date(state.dueAt) > tomorrow) {
+      const { events } = await commit(db, [{ type: 'card.reschedule', userId, cardId, componentId: component, state: { ...state, dueAt: tomorrow.toISOString() } }]);
+      eventId = events[0]?.id ?? null;
+    }
+    await db.insert(schema.reviewLogs).values({
+      cardReviewStateId: stateRow.id, userId, cardId, reviewMode: 'practice', rating, responseTimeMs: responseMs,
+      previousStatus: state.status, previousInterval: state.intervalDays, previousEase: state.easeFactor, previousDue: state.dueAt,
+      newStatus: state.status, newInterval: state.intervalDays, newEase: state.easeFactor,
+      newDue: eventId ? tomorrow.toISOString() : state.dueAt,
+      algorithmVersion: `core:${SCHEDULER_ID}:practice`, reviewedAt: now.toISOString(),
+    });
+  }
+  const state = stateRow ? stateFromRow(stateRow) : defaultScheduler.initial(now);
+  return { practice: true, component_id: component, event_id: eventId, rating, previews: defaultScheduler.preview(state, now) };
+}
+
+router.on('POST', 'review/practice', authed(async (req, res, user) => {
+  const parsed = parseBody(practiceBodySchema, req.body);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
+  const body = parsed.data;
+  const db = getDb();
+  const conds = [eq(schema.cards.userId, user.id), eq(schema.cards.isDeleted, false)];
+  if (body.card_ids?.length) conds.push(inArray(schema.cards.id, body.card_ids));
+  if (body.folder_id !== undefined) conds.push(body.folder_id === null ? isNull(schema.cards.folderId) : eq(schema.cards.folderId, body.folder_id));
+  let rows = await db.select().from(schema.cards).where(and(...conds));
+  const filter = body.filter ?? 'all';
+  if (filter !== 'all' && rows.length) {
+    const ids = rows.map((r) => r.id);
+    const keep = new Set<string>();
+    if (filter === 'learned') {
+      const s = await db.select({ cardId: schema.cardReviewState.cardId }).from(schema.cardReviewState)
+        .where(and(eq(schema.cardReviewState.userId, user.id), inArray(schema.cardReviewState.cardId, ids), sql`${schema.cardReviewState.status} <> 'new'`));
+      s.forEach((x) => keep.add(x.cardId));
+    } else {
+      const since = new Date(Date.now() - 30 * 86400000).toISOString();
+      const s = await db.select({ cardId: schema.reviewLogs.cardId }).from(schema.reviewLogs)
+        .where(and(eq(schema.reviewLogs.userId, user.id), inArray(schema.reviewLogs.cardId, ids),
+          inArray(schema.reviewLogs.rating, ['again', 'hard']), gte(schema.reviewLogs.reviewedAt, since)));
+      s.forEach((x) => keep.add(x.cardId));
+    }
+    rows = rows.filter((r) => keep.has(r.id));
+  }
+  // Chosen cards keep the order they were picked in; a deck is shuffled.
+  if (body.card_ids?.length) {
+    const order = new Map(body.card_ids.map((id, i) => [id, i]));
+    rows.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+  } else {
+    for (let i = rows.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rows[i], rows[j]] = [rows[j], rows[i]]; }
+  }
+  const dealt = rows.flatMap((r) => componentIdsOf(specOf(r)).map((componentId) => ({ cardId: r.id, componentId })))
+    .slice(0, body.size ?? 200);
+  res.status(200).json({ items: await buildItems(db, user.id, dealt) });
 }));
 
 // The coming workload, day by day: reviews of cards seen before today, reviews of cards still to

@@ -126,6 +126,8 @@ export const reviewSubmitBodySchema = z.object({
   interval: intervalSchema.optional(),
   session_id: z.string().nullish(),
   response_time_ms: z.number().int().nonnegative().nullish(),
+  // Off-schedule practice: logged, but due dates stay put (an "again" brings the card back tomorrow).
+  practice: z.boolean().optional(),
   algorithm_version: z.string().nullish(),
   new_state: z.object({
     status: cardStatusSchema,
@@ -135,6 +137,15 @@ export const reviewSubmitBodySchema = z.object({
   }).optional(),
 });
 export type ReviewSubmitBody = z.infer<typeof reviewSubmitBodySchema>;
+
+/** POST review/practice: cards to practise now, whatever their schedule. */
+export const practiceBodySchema = z.object({
+  folder_id: z.string().uuid().nullish(),      // a deck; null is unfiled; omitted with card_ids
+  card_ids: z.array(z.string().uuid()).max(500).optional(),
+  filter: z.enum(['all', 'learned', 'missed']).optional(),   // missed: rated again or hard in the last 30 days
+  size: z.number().int().min(1).max(500).optional(),
+}).refine((b) => b.card_ids?.length || b.folder_id !== undefined, { message: 'folder_id or card_ids required' });
+export type PracticeBody = z.infer<typeof practiceBodySchema>;
 
 /** POST review/score: what a range would be rated, without recording anything. */
 export const intervalScoreBodySchema = z.object({ card_id: z.string().uuid(), interval: intervalSchema });
