@@ -296,7 +296,14 @@ private struct CardTile: View {
                 status
                 if card.answer_type == "numeric" { icon("number", "Answered with a 95% range") }
                 if card.image_url != nil { icon("photo", "Has an image") }
-                if card.bookSource != nil { icon("book", card.bookSource?.book ?? "") }
+                if let book = card.bookSource {
+                    HStack(spacing: 3) {
+                        Image(systemName: "book").font(.system(size: 10))
+                        Text(book.shortTitle).font(.system(size: 10)).lineLimit(1)
+                    }
+                    .foregroundColor(.secondary)
+                    .help(book.book)
+                }
                 if card.isMarkedForRework { icon("flag.fill", "Marked for rework") }
                 Spacer()
                 if confirmingDelete {

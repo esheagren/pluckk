@@ -560,6 +560,11 @@ struct BookSource {
     let chapter: String?
     let selection: String?
 
+    /// The title before any subtitle: "Black Earth", not "Black Earth: The Holocaust as History…".
+    var shortTitle: String {
+        (book.components(separatedBy: ": ").first ?? book).trimmingCharacters(in: .whitespaces)
+    }
+
     init?(_ provenance: ReviewItem.Provenance?, selection: String?) {
         self.init(book: provenance?.container_title, chapter: provenance?.title,
                   selection: provenance?.selection ?? selection, identifier: provenance?.identifier)

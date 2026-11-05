@@ -808,6 +808,17 @@ struct PracticeView: View {
         .overlay(alignment: .topTrailing) {
             if !session.editing { cardActions.padding(10) }
         }
+        .overlay(alignment: .topLeading) {
+            // The book a card comes from, small in the corner rather than in the question.
+            if !session.editing, let book = item.bookSource {
+                Text(book.shortTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(mutedText)
+                    .lineLimit(1)
+                    .padding(.leading, 18).padding(.top, 16)
+                    .help(book.book + (book.chapter.map { " · \($0)" } ?? ""))
+            }
+        }
         .shadow(color: Color.black.opacity(isDark ? 0.55 : 0.10), radius: 12, y: 4)
         .contentShape(Rectangle())
         .onTapGesture {
