@@ -86,7 +86,18 @@ final class SiteGate: ObservableObject {
         defaults.set(until, forKey: Self.untilKey)
         defaults.set(0, forKey: Self.sinceKey)
         defaults.set(Self.today(), forKey: Self.usedTodayKey)
-        if let url = URL(string: "https://\(site)") { NSWorkspace.shared.open(url) }
+        let minutes = self.minutes
+        // Through Pluckk's pass page with a signed pass, so the Learn Gate extension in Chrome
+        // opens too; if no pass can be had, straight to the site.
+        Task {
+            var target = URL(string: "https://\(site)")
+            if let token = AuthManager.shared.accessToken,
+               let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass", json: ["minutes": minutes]),
+               let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let signed = pass["token"] as? String {
+                target = URL(string: "\(Config.backendURL)/pass.html#token=\(signed)&to=https://\(site)")
+            }
+            if let target { NSWorkspace.shared.open(target) }
+        }
     }
 
     private static func today() -> String {

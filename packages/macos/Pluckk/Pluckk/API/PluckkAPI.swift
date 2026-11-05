@@ -646,8 +646,14 @@ struct ReviewItem: Decodable, Identifiable {
     /// Answered inside a module (a click on a map…), which suggests the rating.
     var respondModule: ModuleUse? { modules?.respond.flatMap { $0.pageURL == nil ? nil : $0 } }
 
-    /// The card waits for an answer (a range or a module's) before it reveals on Space or a click.
-    var answersFirst: Bool { isNumeric || respondModule != nil }
+    /// A fill-in-the-blank card whose answer gives each blank: answered by typing.
+    var typedBlanks: [String]? {
+        guard !isNumeric, respondModule == nil else { return nil }
+        return TypedBlanks.expected(question: question, answer: answer)
+    }
+
+    /// The card waits for an answer (a range, a module's, typed blanks) before it reveals on Space or a click.
+    var answersFirst: Bool { isNumeric || respondModule != nil || typedBlanks != nil }
 
     /// The question as shown on a number card: an older "(90% interval)" note gives way to the
     /// range input, which says 95%.

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pluckk pass</title>
+<style>
+  :root { --bg: #fafafa; --text: #2d3436; --muted: #888; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f0f0f; --text: #f5f5f5; --muted: #8a8a8a; } }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, system-ui, sans-serif; }
+  main { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; text-align: center; }
+  p { color: var(--muted); }
+</style>
+</head>
+<body>
+<main><div><h1 id="h">Cards done</h1><p id="p">Opening it now…</p></div></main>
+<script>
+  // Pluckk's Mac app sends you here with a signed pass (#token=…&to=…). If the Learn Gate
+  // extension is installed it reads the pass, checks it with Pluckk and opens the site itself;
+  // without it, this page just goes on to the site.
+  const q = new URLSearchParams(location.hash.slice(1));
+  const to = q.get('to') || '';
+  const safe = /^https:\/\/([a-z0-9-]+\.)*[a-z0-9-]+\.[a-z]{2,}(\/.*)?$/i.test(to) ? to : null;
+  if (safe) document.getElementById('h').textContent = `Cards done: ${new URL(safe).hostname} is open`;
+  setTimeout(() => {
+    if (document.documentElement.dataset.learnGate) return;   // the extension is handling it
+    if (safe) location.replace(safe);
+  }, 900);
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@
 //   POST   images                 { card_id, image_data, mime_type } → { image_url }
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
@@ -787,6 +788,41 @@ router.on('GET', 'um/:uid/:slug/:ver/:file', async (_req, res, { uid, slug, ver,
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', ver === 'draft' ? 'no-store' : 'public, max-age=300');
   res.status(200).send(body);
+});
+
+// ---------------------------------------------------------------- site passes
+// The Mac app's "Open x.com for 5 minutes" also has to satisfy Erik's Learn Gate extension in
+// Chrome. The app asks for a pass, which is only issued once nothing is due and today's new cards
+// are done, signed so it can't be made up; Learn Gate checks it here before unlocking.
+
+const gateKey = () => process.env.GATE_SECRET
+  || createHash('sha256').update(`pluckk-gate:${process.env.DATABASE_URL ?? ''}`).digest();
+const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64url');
+const passSignature = (body: string) => createHmac('sha256', gateKey()).update(body).digest('base64url');
+
+router.on('POST', 'gate/pass', authed(async (req, res, user) => {
+  const minutes = Math.max(1, Math.min(60, Math.round(Number((req.body ?? {}).minutes) || 5)));
+  const settings = await getStudySettings(user.id);
+  const { folderRows, candidateRows, newToday } = await mixerContext(user.id);
+  const left = todayCounts({
+    folders: folderRows, candidates: candidateRows, newReviewedTodayByFolder: newToday,
+    defaultNewPerDay: settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY,
+  });
+  if (left.review > 0 || left.learn > 0) { res.status(403).json({ error: "Today's cards aren't done yet", ...left }); return; }
+  const until = Date.now() + minutes * 60000;
+  const body = `${user.id}.${until}`;
+  res.status(200).json({ token: `${b64url(body)}.${passSignature(body)}`, until });
+}));
+
+router.on('GET', 'gate/verify', async (req, res) => {
+  const token = String(req.query?.token ?? '');
+  const [encoded, signature] = token.split('.');
+  const body = encoded ? Buffer.from(encoded, 'base64url').toString() : '';
+  const expected = body ? passSignature(body) : '';
+  const valid = !!signature && signature.length === expected.length && timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const until = Number(body.split('.')[1]);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(200).json(valid && until > Date.now() ? { ok: true, until } : { ok: false });
 });
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {

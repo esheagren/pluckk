@@ -232,3 +232,152 @@ struct IntervalReveal: View {
         return "Missed by \(by) · your range \(range)"
     }
 }
+
+// MARK: - Typed blanks
+
+/// Fill-in-the-blank cards (a question with ___) are answered by typing each blank, so a card
+/// can't be passed on a vague "I think I know it". The card's answer gives the blanks in order,
+/// separated by commas ("regression, classification"); "x / y" accepts either.
+enum TypedBlanks {
+    static let blank = try! NSRegularExpression(pattern: "_{2,}")
+
+    static func count(in question: String) -> Int {
+        blank.numberOfMatches(in: question, range: NSRange(question.startIndex..., in: question))
+    }
+
+    /// The expected text for each blank, or nil when the answer doesn't split into one per blank.
+    static func expected(question: String, answer: String) -> [String]? {
+        let n = count(in: question)
+        guard n > 0 else { return nil }
+        let first = (answer.components(separatedBy: "\n\n").first ?? answer).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !first.isEmpty else { return nil }
+        if n == 1 { return [first] }
+        let parts = first.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return parts.count == n ? parts : nil
+    }
+
+    enum Verdict { case right, close, wrong }
+
+    struct Result: Equatable {
+        let typed: String
+        let expected: String
+        let verdict: Verdict
+    }
+
+    /// Right if it matches once case, accents, punctuation, a leading article and anything in
+    /// brackets are set aside; close if within a typo or two; otherwise wrong.
+    static func judge(_ typed: String, _ expected: String) -> Verdict {
+        let t = normal(typed)
+        guard !t.isEmpty else { return .wrong }
+        let options = expected.components(separatedBy: "/").map(normal).filter { !$0.isEmpty }
+        if options.contains(t) { return .right }
+        let near = options.contains { e in distance(t, e) <= max(1, e.count / 6) }
+        return near ? .close : .wrong
+    }
+
+    static func score(_ results: [Result]) -> ModuleResponse {
+        let right = results.filter { $0.verdict == .right }.count
+        let close = results.filter { $0.verdict == .close }.count
+        let score = right == results.count ? 0.8 : right + close == results.count ? 0.5 : 0.0
+        let summary = results.count == 1
+            ? (right == 1 ? "Right" : close == 1 ? "Close: check the spelling" : "Not quite")
+            : "\(right) of \(results.count) right" + (close > 0 ? ", \(close) close" : "")
+        return ModuleResponse(score: score, summary: summary)
+    }
+
+    static func normal(_ s: String) -> String {
+        var t = s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        t = t.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+        t = String(t.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " })
+        var words = t.split(separator: " ").map(String.init)
+        if let first = words.first, ["the", "a", "an"].contains(first), words.count > 1 { words.removeFirst() }
+        return words.joined(separator: " ")
+    }
+
+    static func distance(_ a: String, _ b: String) -> Int {
+        let a = Array(a), b = Array(b)
+        if a.isEmpty { return b.count }
+        if b.isEmpty { return a.count }
+        var row = Array(0...b.count)
+        for i in 1...a.count {
+            var prev = row[0]
+            row[0] = i
+            for j in 1...b.count {
+                let cur = row[j]
+                row[j] = a[i - 1] == b[j - 1] ? prev : min(prev, row[j], row[j - 1]) + 1
+                prev = cur
+            }
+        }
+        return row[b.count]
+    }
+}
+
+/// A box per blank. Return moves to the next; on the last it checks.
+struct TypedBlanksEntry: View {
+    let count: Int
+    let onCheck: ([String]) -> Void
+    @State private var entries: [String] = []
+    @FocusState private var focused: Int?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(0..<count, id: \.self) { i in
+                HStack(spacing: 8) {
+                    if count > 1 {
+                        Text("\(i + 1)").font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundColor(.secondary).frame(width: 14)
+                    }
+                    TextField(count > 1 ? "Blank \(i + 1)" : "Type the answer", text: binding(i))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                        .focused($focused, equals: i)
+                        .onSubmit { if i + 1 < count { focused = i + 1 } else { check() } }
+                }
+                .frame(maxWidth: 420)
+            }
+            Button(action: check) {
+                HStack(spacing: 6) { Text("Check"); Text("↩").font(.system(size: 11)).opacity(0.6) }
+            }
+            .buttonStyle(PillButtonStyle(prominent: true))
+        }
+        .onAppear {
+            entries = Array(repeating: "", count: count)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = 0 }
+        }
+    }
+
+    private func binding(_ i: Int) -> Binding<String> {
+        Binding(get: { i < entries.count ? entries[i] : "" },
+                set: { if i < entries.count { entries[i] = $0 } })
+    }
+
+    private func check() {
+        PluckkPanel.shared?.hostWindow.makeFirstResponder(nil)
+        onCheck(entries)
+    }
+}
+
+/// After checking: what was typed against what was wanted, blank by blank.
+struct TypedBlanksReveal: View {
+    let results: [TypedBlanks.Result]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(Array(results.enumerated()), id: \.offset) { i, r in
+                HStack(spacing: 8) {
+                    if results.count > 1 { Text("\(i + 1)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary) }
+                    Image(systemName: r.verdict == .right ? "checkmark.circle.fill" : r.verdict == .close ? "circle.lefthalf.filled" : "xmark.circle.fill")
+                        .foregroundColor(r.verdict == .right ? PluckkTheme.Dark.success : r.verdict == .close ? Color(hex: "e5a14b") : Color(hex: "e5534b"))
+                    Text(r.typed.isEmpty ? "(blank)" : r.typed)
+                        .strikethrough(r.verdict == .wrong)
+                        .foregroundColor(r.verdict == .right ? .primary : .secondary)
+                    if r.verdict != .right {
+                        Text("→ \(r.expected)").foregroundColor(.primary)
+                    }
+                }
+                .font(.system(size: 14))
+            }
+        }
+    }
+}

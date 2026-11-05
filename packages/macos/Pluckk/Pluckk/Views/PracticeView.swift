@@ -283,7 +283,7 @@ final class PracticeSession: ObservableObject {
             // keys still belong to the card, so Space and 1–5 carry on after asking something.
             if let tv = panel.hostWindow.firstResponder as? NSTextView, tv.isEditable {
                 let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let answering = self.current?.isNumeric == true && !self.revealed   // typing a range
+                let answering = self.current?.answersFirst == true && !self.revealed   // typing a range or blanks
                 guard blank, !answering, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
             }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -375,6 +375,18 @@ final class PracticeSession: ObservableObject {
 
     /// The rating a range or a module suggests; Space or Return keeps it.
     var suggestedRating: ReviewRating? { outcome?.rating ?? moduleResponse?.rating }
+
+    /// What was typed into a fill-in-the-blank card, judged blank by blank.
+    @Published private(set) var typedResults: [TypedBlanks.Result]?
+
+    func checkTyped(_ entries: [String], for item: ReviewItem) {
+        guard current?.id == item.id, !revealed, let expected = item.typedBlanks else { return }
+        let results = zip(expected, entries + Array(repeating: "", count: max(0, expected.count - entries.count))).map {
+            TypedBlanks.Result(typed: $1.trimmingCharacters(in: .whitespaces), expected: $0, verdict: TypedBlanks.judge($1, $0))
+        }
+        typedResults = results
+        moduleResponded(TypedBlanks.score(results), for: item)
+    }
 
     func moduleResponded(_ response: ModuleResponse, for item: ReviewItem) {
         guard current?.id == item.id, !revealed else { return }
@@ -615,6 +627,7 @@ final class PracticeSession: ObservableObject {
         revealed = false
         outcome = nil
         moduleResponse = nil
+        typedResults = nil
         reading = nil
         shownAt = Date()
         if index >= queue.count { phase = .done }
@@ -872,6 +885,11 @@ struct PracticeView: View {
                 }
             }
 
+            if let blanks = item.typedBlanks, !session.revealed {
+                TypedBlanksEntry(count: blanks.count) { session.checkTyped($0, for: item) }
+                    .padding(.top, 4)
+            }
+
             if item.isNumeric && !session.revealed {
                 IntervalEntry(unit: item.numeric_unit, busy: session.busy) { session.lockInterval($0, $1) }
                     .padding(.top, 6)
@@ -879,6 +897,7 @@ struct PracticeView: View {
 
             if session.revealed {
                 if let outcome = session.outcome { IntervalReveal(outcome: outcome).padding(.top, 4) }
+                if let typed = session.typedResults { TypedBlanksReveal(results: typed) }
                 if let response = session.moduleResponse, let summary = response.summary {
                     Text(summary)
                         .font(.system(size: 13, weight: .medium))
@@ -1191,7 +1210,7 @@ struct PracticeView: View {
                     }
                 }
             }
-        } else if item.respondModule != nil {
+        } else if item.respondModule != nil || item.typedBlanks != nil {
             Button("Show the answer") { session.reveal() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
