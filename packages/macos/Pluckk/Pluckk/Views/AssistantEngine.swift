@@ -753,6 +753,9 @@ final class AssistantSession: ObservableObject {
                 lines.append("Current card id: \(card.card_id)")
                 if let deck = card.folder?.name { lines.append("Deck: \(deck)") }
                 lines.append("Question: \(card.question)")
+                if card.isLeech {
+                    lines.append("This card is a leech: he keeps forgetting it. If he asks about it, suggest a rework (split it, add an example or memory hook, separate it from a look-alike, or add a module) rather than more drilling.")
+                }
                 if let m = card.modules {
                     let uses = (m.prompt ?? []).map { "prompt \($0.use)" } + [m.respond].compactMap { $0.map { "respond \($0.use)" } } + (m.reveal ?? []).map { "reveal \($0.use)" }
                     if !uses.isEmpty { lines.append("Modules on it: " + uses.joined(separator: ", ")) }

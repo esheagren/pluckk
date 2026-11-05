@@ -414,6 +414,12 @@ final class PracticeSession: ObservableObject {
                                                                      interval: outcome.map { ($0.lower, $0.upper) },
                                                                      practice: practiceRun != nil)
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
+                if result.leech == true {
+                    notice = "That card has slipped \(result.lapses ?? 4) times, so it's flagged as a leech. Rework it rather than drill it; the assistant can help."
+                    for i in queue.indices where queue[i].card_id == item.card_id {
+                        queue[i].tags = (queue[i].tags ?? []) + ["leech"]
+                    }
+                }
                 SiteGate.shared.noteReview()
                 reviewedCount += 1
                 if rating == .again {
@@ -766,6 +772,15 @@ struct PracticeView: View {
                 Text(deck.uppercased())
                     .font(.system(size: 10, weight: .semibold)).tracking(0.6)
                     .foregroundColor(PluckkTheme.accent)
+            }
+            if item.isLeech {
+                Text("LEECH")
+                    .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(PluckkTheme.Dark.warning.opacity(0.14))
+                    .foregroundColor(PluckkTheme.Dark.warning)
+                    .cornerRadius(4)
+                    .help("You keep forgetting this card. Rework it rather than drilling it: split it, add an example or a memory hook. The assistant can help.")
             }
             if item.is_new {
                 Text("NEW")

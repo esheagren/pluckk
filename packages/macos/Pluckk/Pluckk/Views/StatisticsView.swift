@@ -224,9 +224,10 @@ struct StatisticsView: View {
             HStack(spacing: 8) {
                 Text("All decks").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                header("New left", 58)
-                header("Due", 36)
-                header("Learned", 54)
+                header("Difficulty", 56)
+                header("New left", 54)
+                header("Due", 32)
+                header("Learning", 52)
                 header("A day", 82)
             }
             .padding(.bottom, 6)
@@ -256,9 +257,11 @@ struct StatisticsView: View {
                 .foregroundColor(live ? .primary : .secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            figure(deck.new, 58, bold: live)
-            figure(deck.due, 36)
-            figure(max(0, deck.total - deck.new), 54)
+                .help(deck.title)
+            difficulty(deck)
+            figure(deck.new, 54, bold: live)
+            figure(deck.due, 32)
+            learning(deck)
             Group {
                 if live {
                     HStack(spacing: 2) {
@@ -283,6 +286,30 @@ struct StatisticsView: View {
         .contentShape(Rectangle())
         .onTapGesture { openDeck = deck }
         .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.05)).frame(height: 1) }
+    }
+
+    /// 0–100, coloured from easy green to hard red, with how it's worked out on hover.
+    private func difficulty(_ deck: DeckSummary) -> some View {
+        let score = deck.difficulty
+        let tint: Color = score.map { $0 < 20 ? PluckkTheme.Dark.success : $0 < 50 ? .primary : $0 < 70 ? PluckkTheme.Dark.warning : Color(hex: "e5534b") } ?? .secondary
+        return Text(score.map { String(format: "%.1f", $0) } ?? "–")
+            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .foregroundColor(tint)
+            .frame(width: 56, alignment: .trailing)
+            .help("How hard this deck is for you, 0 (known at first sight) to 100 (nothing sticks), from your ratings over the last 90 days, recent ones counting more. Harder decks may have fewer cards still being learned before new ones stop.")
+    }
+
+    /// Cards still being learned, against the cap when there is one ("5 / 3").
+    private func learning(_ deck: DeckSummary) -> some View {
+        let n = deck.still_learning ?? 0
+        let text = deck.learning_cap.map { "\(n)/\($0)" } ?? "\(n)"
+        return Text(text)
+            .font(.system(size: 12).monospacedDigit())
+            .foregroundColor(deck.isHeld ? PluckkTheme.Dark.warning : (n == 0 ? .secondary : .primary))
+            .frame(width: 52, alignment: .trailing)
+            .help(deck.learning_cap == nil ? "Seen cards whose next review is under a week away. No cap: this deck is easy enough."
+                  : deck.isHeld ? "Held: \(n) cards are still being learned and this deck's cap is \(deck.learning_cap ?? 0), so no new cards for now. They come back as those reach a week between reviews."
+                  : "Seen cards whose next review is under a week away, out of this deck's cap.")
     }
 
     private func figure(_ n: Int, _ width: CGFloat, bold: Bool = false) -> some View {

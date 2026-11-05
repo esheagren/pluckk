@@ -296,6 +296,9 @@ class PluckkAPI {
     struct ReviewResult: Decodable {
         let event_id: String?   // nil for a practice rating that changed nothing
         let previews: IntervalPreviews
+        /// This rating's lapse made the card a leech (tagged 'leech').
+        var leech: Bool? = nil
+        var lapses: Int? = nil
     }
 
     /// `interval` is a number card's range; the server records it with the rating.
@@ -523,9 +526,22 @@ struct DeckSummary: Decodable, Identifiable, Hashable {
     let total: Int
     let new: Int
     let due: Int
+    /// 0 (known at first sight) to 100 (nothing sticks), from his recent ratings; nil until a deck
+    /// has a few reviews.
+    var difficulty: Double? = nil
+    /// Seen cards whose next review is under a week away.
+    var still_learning: Int? = nil
+    /// How many may be still learning before new cards stop; nil for an easy deck (no cap).
+    var learning_cap: Int? = nil
 
     var id: String { folder_id ?? "unfiled" }
     var title: String { name ?? "Unfiled" }
+
+    /// New cards are waiting but held back until some still-learning cards stick.
+    var isHeld: Bool {
+        guard let cap = learning_cap, let learning = still_learning else { return false }
+        return new > 0 && !is_paused && learning >= cap
+    }
 }
 
 /// A card as listed by /api/v1/cards (only the fields the deck browser shows).
@@ -620,6 +636,9 @@ struct ReviewItem: Decodable, Identifiable {
     }
 
     var isMarkedForRework: Bool { tags?.contains(Rework.tag) == true }
+
+    /// Forgotten again and again (see the API's leech flag): worth reworking, not drilling.
+    var isLeech: Bool { tags?.contains("leech") == true }
 
     /// Answered with a 95% range rather than recalled and rated.
     var isNumeric: Bool { answer_type == "numeric" && numeric_answer != nil }

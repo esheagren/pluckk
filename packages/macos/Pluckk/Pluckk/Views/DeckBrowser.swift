@@ -305,6 +305,7 @@ private struct CardTile: View {
                     .help(book.book)
                 }
                 if card.isMarkedForRework { icon("flag.fill", "Marked for rework") }
+                if card.tags?.contains("leech") == true { icon("ladybug", "Leech: you keep forgetting it; rework it") }
                 Spacer()
                 if confirmingDelete {
                     Text("Delete?").font(.system(size: 11)).foregroundColor(.secondary)
