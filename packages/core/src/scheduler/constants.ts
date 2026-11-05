@@ -7,8 +7,9 @@ export const DEFAULT_CONFIG: SM2Config = {
   intervalMultiplier: { hard: 1.2, easy: 1.3, trivial: 2.6 },
   // Intervals for new/first-time cards (days)
   newCardIntervals: { again: 0.00694, hard: 1, good: 3, easy: 7, trivial: 21 },
-  // Graduation intervals for learning/relearning cards (days)
-  graduationIntervals: { again: 0.00694, hard: 1, good: 2, easy: 4, trivial: 12 },
+  // A card in learning or relearning got Again earlier: however easy the retry minutes later
+  // feels, it comes back tomorrow (days). Erik, 2026-11-05.
+  graduationIntervals: { again: 0.00694, hard: 1, good: 1, easy: 1, trivial: 1 },
   maxIntervalDays: 365,
 };
 

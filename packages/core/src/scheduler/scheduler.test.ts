@@ -30,8 +30,16 @@ describe('SM-2 parity with the pre-core-engine behaviour', () => {
   });
   it('a learning card graduates on anything but again', () => {
     const s: ComponentState = { ...initialComponentState(NOW), status: 'learning', intervalDays: 0.00694 };
-    expect(computeNext(s, 'good', NOW)).toMatchObject({ intervalDays: 2, status: 'review' });
+    expect(computeNext(s, 'good', NOW)).toMatchObject({ intervalDays: 1, status: 'review' });
     expect(computeNext(s, 'again', NOW).status).toBe('learning');
+  });
+  it('a missed card comes back tomorrow however easy the retry felt', () => {
+    for (const s of [
+      computeNext(initialComponentState(NOW), 'again', NOW),     // new card, missed
+      computeNext(reviewState(20), 'again', NOW),                 // known card, forgotten
+    ]) {
+      for (const r of ['hard', 'good', 'easy', 'trivial'] as const) expect(computeNext(s, r, NOW).intervalDays).toBe(1);
+    }
   });
   it('trivial pushes a card much further than easy', () => {
     const fresh = initialComponentState(NOW);
