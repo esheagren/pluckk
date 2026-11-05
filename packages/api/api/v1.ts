@@ -17,7 +17,7 @@ import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
@@ -284,7 +284,14 @@ router.on('POST', 'review', authed(async (req, res, user) => {
     algorithmVersion: `core:${SCHEDULER_ID}`,
     reviewedAt: r.state.lastReviewedAt ?? new Date().toISOString(),
   });
-  res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating });
+  // A card forgotten again and again is a leech: flag it (tag 'leech') so it gets reworked
+  // rather than drilled. Every second lapse from the fourth.
+  let leech = false;
+  if (isLeechLapse(r.previous?.lapseCount ?? 0, r.state.lapseCount) && !r.card.tags.includes('leech')) {
+    await patchCard(db, user.id, body.card_id, { tags: [...r.card.tags, 'leech'] });
+    leech = true;
+  }
+  res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating, leech, lapses: r.state.lapseCount });
 }));
 
 // Practice outside the schedule. The rating is logged (review_mode 'practice') but the card keeps
@@ -427,7 +434,13 @@ router.on('GET', 'review/decks', authed(async (_req, res, user) => {
     where c.user_id = ${user.id} and c.is_deleted = false
     group by c.folder_id, f.name, f.is_paused, f.new_per_day
     order by f.name nulls last`);
-  res.status(200).json({ decks: r.rows });
+  const settings = await getStudySettings(user.id);
+  const gate = await deckGates(user.id);
+  const decks = (r.rows as Array<{ folder_id: string | null; new_per_day: number | null }>).map((row) => {
+    const g = gate(row.folder_id, row.new_per_day ?? settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY);
+    return { ...row, difficulty: g.score, still_learning: g.stillLearning, learning_cap: g.cap };
+  });
+  res.status(200).json({ decks });
 }));
 
 router.on('GET', 'review/settings', authed(async (_req, res, user) => {
@@ -450,11 +463,44 @@ router.on('PATCH', 'review/settings', authed(async (req, res, user) => {
 }));
 
 /** What the mixer needs: this user's decks, candidate components, and new cards introduced today. */
+/**
+ * Each deck's difficulty (0–100, from the last 90 days of ratings), how many of its cards are
+ * still being learned (seen, next review under STILL_LEARNING_DAYS away), and the cap that follows.
+ */
+async function deckGates(userId: string) {
+  const db = getDb();
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const logs = await db.execute(sql`
+    select c.folder_id, l.rating, l.reviewed_at
+    from review_logs l join cards c on c.id = l.card_id
+    where l.user_id = ${userId} and l.reviewed_at >= ${since} and c.is_deleted = false`);
+  const ratings = new Map<string | null, Array<{ rating: string; at: string }>>();
+  for (const r of logs.rows as Array<{ folder_id: string | null; rating: string; reviewed_at: string | Date }>) {
+    const list = ratings.get(r.folder_id) ?? [];
+    list.push({ rating: r.rating, at: new Date(r.reviewed_at).toISOString() });
+    ratings.set(r.folder_id, list);
+  }
+  const learning = await db.execute(sql`
+    select c.folder_id, count(distinct c.id)::int as n
+    from cards c join card_review_state s on s.card_id = c.id and s.user_id = c.user_id
+    where c.user_id = ${userId} and c.is_deleted = false
+      and (s.status in ('learning', 'relearning') or (s.status = 'review' and s.interval_days < ${STILL_LEARNING_DAYS}))
+    group by c.folder_id`);
+  const stillLearning = new Map<string | null, number>();
+  for (const r of learning.rows as Array<{ folder_id: string | null; n: number }>) stillLearning.set(r.folder_id, r.n);
+  const now = new Date();
+  return (folderId: string | null, dailyLimit: number) => {
+    const score = difficultyScore(ratings.get(folderId) ?? [], now);
+    const cap = learningCap(score, dailyLimit);
+    return { score, cap, stillLearning: stillLearning.get(folderId) ?? 0 };
+  };
+}
+
 async function mixerContext(userId: string) {
   const db = getDb();
-  const folderRows = await db.select({
-    id: schema.folders.id, weight: schema.folders.weight, isPaused: schema.folders.isPaused, newPerDay: schema.folders.newPerDay,
-  }).from(schema.folders).where(eq(schema.folders.userId, userId));
+  const settings = await getStudySettings(userId);
+  const defaultLimit = settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY;
+  const gate = await deckGates(userId);
 
   // Slim candidate rows, one per component: id, component, folder, created, state status/due.
   // A card with no state rows yet is its single 'main' component, new.
@@ -475,6 +521,15 @@ async function mixerContext(userId: string) {
     group by c.folder_id`);
   const newToday = new Map<string | null, number>();
   for (const r of introduced.rows as Array<{ folder_id: string | null; n: number }>) newToday.set(r.folder_id, r.n);
+
+  // A hard deck with too many cards still being learned gets fewer new ones (or none) today.
+  const folderRows = (await db.select({
+    id: schema.folders.id, weight: schema.folders.weight, isPaused: schema.folders.isPaused, newPerDay: schema.folders.newPerDay,
+  }).from(schema.folders).where(eq(schema.folders.userId, userId))).map((f) => {
+    const limit = f.newPerDay ?? defaultLimit;
+    const g = gate(f.id, limit);
+    return { ...f, newPerDay: gatedNewPerDay(limit, newToday.get(f.id) ?? 0, g.cap, g.stillLearning) };
+  });
 
   return { folderRows, candidateRows, newToday };
 }

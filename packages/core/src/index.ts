@@ -6,3 +6,4 @@ export * from './queue.js';
 export * from './api.js';
 export * from './numeric.js';
 export * from './forecast.js';
+export * from './difficulty.js';
