@@ -42,15 +42,21 @@ export function difficultyScore(reviews: RatedReview[], now: Date = new Date()):
   return Math.round((1000 * sum) / weight) / 10;
 }
 
+/** Days' worth of new cards a deck may have still learning at the easy end of the scale. */
+export const CAP_DAYS_AT_EASIEST = 14;
+
 /**
  * How many cards a deck may have still being learned before new ones stop: none (null) for an
- * easy deck, then shrinking smoothly as the score rises — about ten days' worth of new cards at
- * 15, three and a half at 50, half a day's at 80 — never below 3.
+ * easy deck, then shrinking smoothly as the score rises. A card rated Good takes about five days
+ * to reach a week-long gap, so a deck flowing normally holds about five days' worth of new cards
+ * in learning; the cap leaves that alone for an ordinary deck (about seven days' worth at 40),
+ * tightens for a hard one (three at 60) and nearly stops a very hard one (under a day's at 80),
+ * never below 3.
  */
 export function learningCap(score: number | null, dailyLimit: number): number | null {
   if (score == null || score < CAP_FREE_BELOW) return null;
   const room = Math.max(0, (100 - score) / (100 - CAP_FREE_BELOW));
-  return Math.max(3, Math.round(dailyLimit * 10 * room * room));
+  return Math.max(3, Math.round(dailyLimit * CAP_DAYS_AT_EASIEST * room * room));
 }
 
 /**

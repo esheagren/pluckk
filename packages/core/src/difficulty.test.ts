@@ -31,9 +31,11 @@ describe('learning cap', () => {
     expect(learningCap(8, 21)).toBeNull();
   });
   it('shrinks smoothly as the deck gets harder, never below 3', () => {
-    expect(learningCap(15, 5)).toBe(50);
-    expect(learningCap(50, 5)).toBe(17);
-    expect(learningCap(80, 5)).toBe(3);
+    expect(learningCap(15, 5)).toBe(70);
+    expect(learningCap(40, 1)).toBe(7);     // an ordinary deck at 1 a day: about a week's worth
+    expect(learningCap(50, 5)).toBe(24);
+    expect(learningCap(80, 5)).toBe(4);
+    expect(learningCap(84, 5)).toBe(3);
     expect(learningCap(99, 20)).toBe(3);
     expect(learningCap(40, 5)!).toBeGreaterThan(learningCap(60, 5)!);
   });
