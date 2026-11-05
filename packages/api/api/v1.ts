@@ -16,7 +16,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
-import { list, put } from '@vercel/blob';
+import { del, list, put } from '@vercel/blob';
 import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
@@ -677,6 +677,14 @@ router.on('POST', 'modules/mine/:slug', authed(async (req, res, user, { slug }) 
   await put(`${base}index.html`, html, { ...opts, contentType: 'text/html; charset=utf-8' });
   await put(`${base}manifest.json`, JSON.stringify({ ...checked, id: `me/${slug}` }), { ...opts, contentType: 'application/json' });
   res.status(200).json({ slug, use: `me/${slug}@draft`, src: `/um/${user.id}/${slug}/draft/index.html` });
+}));
+
+// Remove a module (its draft and every version). Cards still naming it fall back to their text.
+router.on('DELETE', 'modules/mine/:slug', authed(async (_req, res, user, { slug }) => {
+  if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
+  const files = await moduleFiles(user.id, slug);
+  if (files.length) await del(files.map((f) => f.url), { token: blobToken() });
+  res.status(200).json({ deleted: files.length });
 }));
 
 // Freeze the draft as the next version.
