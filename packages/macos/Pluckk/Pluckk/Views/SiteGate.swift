@@ -110,10 +110,10 @@ final class SiteGate: ObservableObject {
         guard enabled, !isOpen else { return }
         let gated = sites
         guard !gated.isEmpty else { return }
-        // Only browsers already running: telling one that isn't would launch it.
-        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
-        let targets = Self.browsers.filter(running.contains)
-        guard !targets.isEmpty else { return }
+        // Only the browser in front: that's where a gated page would be read, it's certainly
+        // running (telling one that isn't would launch it), and the rest of the time this costs nothing.
+        guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier, Self.browsers.contains(front) else { return }
+        let targets = [front]
         guard !sweeping else { return }
         sweeping = true
         queue.async { [weak self] in
