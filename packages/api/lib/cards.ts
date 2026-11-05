@@ -23,7 +23,7 @@ export class CardError extends Error {
 
 export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSpec | null): CardSpec | null {
   if (b.spec) return b.spec;
-  if (!b.question && !b.answer && !b.style && !('answer_type' in b) && !('numeric_answer' in b) && !('numeric_unit' in b)) return null;
+  if (!b.question && !b.answer && !b.style && !('answer_type' in b) && !('numeric_answer' in b) && !('numeric_unit' in b) && !('modules' in b)) return null;
   if (current && (current.style === 'qa_bidirectional' || current.style === 'cloze_list')) {
     throw new CardError(400, 'This card has several components; edit it with a full spec');
   }
@@ -39,9 +39,10 @@ export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSp
     numericUnit: 'numeric_unit' in b ? b.numeric_unit : base?.numeric?.unit,
     numericPrecision: 'numeric_precision' in b ? b.numeric_precision : base?.numeric?.precision,
   });
-  // The flat form has no modules: an edit of the text keeps the card's own.
-  if (base && 'modules' in base && base.modules && spec.style !== 'qa_bidirectional' && spec.style !== 'cloze_list') {
-    spec.modules = base.modules;
+  // Modules: the body's when it sets them (null clears), otherwise the card's own.
+  if (spec.style !== 'qa_bidirectional' && spec.style !== 'cloze_list') {
+    const modules = 'modules' in b ? b.modules : base && 'modules' in base ? base.modules : null;
+    if (modules && (modules.prompt?.length || modules.respond || modules.reveal?.length)) spec.modules = modules;
   }
   return spec;
 }

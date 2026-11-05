@@ -23,11 +23,12 @@ const numericSchema = z.object({
 });
 
 const moduleUseSchema = z.object({
-  use: z.string().regex(/^[a-z0-9-]+@\d+$/, 'use is "<module id>@<major version>"'),
+  // A built-in module ("geo-map@1") or one of the user's own ("me/gradient-descent@2").
+  use: z.string().regex(/^(me\/)?[a-z0-9-]+@\d+$/, 'use is "<module id>@<major version>" or "me/<slug>@<version>"'),
   props: z.record(z.string(), z.unknown()).optional(),
 });
 
-const modulesSchema = z.object({
+export const modulesSchema = z.object({
   prompt: z.array(moduleUseSchema).max(4).optional(),
   respond: moduleUseSchema.nullish(),
   reveal: z.array(moduleUseSchema).max(4).optional(),
@@ -92,6 +93,7 @@ export const createCardBodySchema = z.object({
   folder_id: z.string().uuid().nullish(),
   tags: z.array(z.string()).nullish(),
   image_url: z.string().nullish(),
+  modules: modulesSchema.nullish(),
 }).refine((b) => b.spec || (b.question && b.answer), { message: 'spec or question+answer required' });
 export type CreateCardBody = z.infer<typeof createCardBodySchema>;
 
@@ -110,6 +112,8 @@ export const patchCardBodySchema = z.object({
   answer_type: z.string().nullish(),
   numeric_answer: z.number().nullish(),
   numeric_unit: z.string().nullish(),
+  // A simple card's modules (see CardModules); null removes them all.
+  modules: modulesSchema.nullish(),
 });
 export type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 

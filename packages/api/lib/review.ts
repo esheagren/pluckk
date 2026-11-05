@@ -5,7 +5,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import {
   componentIdsOf, componentStyle, defaultScheduler, MAIN_COMPONENT, renderComponent, specFromLegacy,
-  type ComponentState, type DealtItem,
+  type CardModules, type ComponentState, type DealtItem, type ModuleUse,
 } from '@pluckk/core';
 import { getDb, schema } from './db.js';
 import { isoTimestamp, snake } from './serialize.js';
@@ -64,9 +64,26 @@ export async function buildItems(db: Db, userId: string, dealt: DealtItem[]) {
       is_new: !stateRow || stateRow.status === 'new',
       review_state: stateRow ? snake(stateRow) : null,
       previews: defaultScheduler.preview(state, now),
-      // Verbatim, not snake_cased: module props are the module's own keys.
-      modules: 'modules' in spec ? spec.modules ?? null : null,
+      // Verbatim, not snake_cased: module props are the module's own keys. Each use gets the
+      // address its page is served from.
+      modules: 'modules' in spec && spec.modules ? withSources(spec.modules, userId) : null,
     });
   }
   return items;
+}
+
+/** Where a module's page is served: built-ins under /modules, the user's own under /um. */
+export function moduleSource(use: string, userId: string): string | null {
+  const m = /^(me\/)?([a-z0-9-]+)@(\d+)$/.exec(use);
+  if (!m) return null;
+  return m[1] ? `/um/${userId}/${m[2]}/${m[3]}/index.html` : `/modules/${m[2]}/${m[3]}/index.html`;
+}
+
+function withSources(modules: CardModules, userId: string): CardModules {
+  const add = (u: ModuleUse) => ({ ...u, src: moduleSource(u.use, userId) });
+  return {
+    ...(modules.prompt ? { prompt: modules.prompt.map(add) } : {}),
+    ...(modules.respond ? { respond: add(modules.respond) } : {}),
+    ...(modules.reveal ? { reveal: modules.reveal.map(add) } : {}),
+  };
 }

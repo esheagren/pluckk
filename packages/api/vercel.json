@@ -5,6 +5,10 @@
   "installCommand": "cd ../.. && npm install",
   "rewrites": [
     {
+      "source": "/um/:path*",
+      "destination": "/api/v1?path=um/:path*"
+    },
+    {
       "source": "/api/v1/:path*",
       "destination": "/api/v1?path=:path*"
     }

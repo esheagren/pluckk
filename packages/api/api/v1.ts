@@ -16,12 +16,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
-import { put } from '@vercel/blob';
+import { list, put } from '@vercel/blob';
 import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
-import { buildItems, stateFromRow } from '../lib/review.js';
+import { buildItems, moduleSource, stateFromRow } from '../lib/review.js';
 import { commit, loadEvents } from '../lib/store.js';
 import { Router, pathSegments, type RouteHandler } from '../lib/router.js';
 import { snake, pick, isoTimestamp } from '../lib/serialize.js';
@@ -584,6 +584,147 @@ router.on('POST', 'images', authed(async (req, res, user) => {
   await setCardImage(db, user.id, card_id, blob.url);  // card.setImage in the diary
   res.status(200).json({ image_url: blob.url });
 }));
+
+// ---------------------------------------------------------------- card modules
+// Built-in modules live in public/modules (their manifests indexed in public/modules/index.json).
+// A user's own modules, written by them or their assistant, live in Blob storage:
+//   user-modules/<user id>/<slug>/<draft | 1 | 2 …>/{index.html, manifest.json}
+// A draft can be previewed; publishing freezes it as the next numbered version, which cards use
+// as "me/<slug>@<n>". Pages are served from /um/… on this origin under a strict content policy.
+
+const SLUG = /^[a-z0-9][a-z0-9-]{1,39}$/;
+const MAX_HTML = 600_000;
+const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN;
+const modulePrefix = (userId: string, slug?: string) => `user-modules/${userId}/${slug ? `${slug}/` : ''}`;
+
+interface ModuleManifest { describe: string; slots: string[]; props?: unknown; samples?: Array<{ slot: string; props?: unknown }> }
+
+function checkManifest(m: unknown): ModuleManifest | string {
+  const o = m as Partial<ModuleManifest> | null;
+  if (!o || typeof o !== 'object') return 'manifest must be an object';
+  if (typeof o.describe !== 'string' || o.describe.length < 10) return 'manifest.describe: say in a sentence or two what the module shows and which props it takes';
+  if (!Array.isArray(o.slots) || !o.slots.length || !o.slots.every((s) => ['prompt', 'respond', 'reveal'].includes(s))) return 'manifest.slots: any of prompt, respond, reveal';
+  return o as ModuleManifest;
+}
+
+async function moduleFiles(userId: string, slug?: string) {
+  const out: Array<{ pathname: string; url: string; uploadedAt: Date }> = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: modulePrefix(userId, slug), cursor, limit: 1000, token: blobToken() });
+    out.push(...page.blobs.map((b) => ({ pathname: b.pathname, url: b.url, uploadedAt: b.uploadedAt })));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return out;
+}
+
+async function fetchText(url: string): Promise<string | null> {
+  const r = await fetch(url, { cache: 'no-store' });
+  return r.ok ? r.text() : null;
+}
+
+/** The user's modules: slug → versions, whether there's a draft, and the newest manifest. */
+async function myModules(userId: string) {
+  const files = await moduleFiles(userId);
+  const by = new Map<string, { versions: number[]; draft: boolean; manifestUrl?: string; best: number }>();
+  for (const f of files) {
+    const [, , slug, ver, name] = f.pathname.split('/');
+    if (!slug || !ver) continue;
+    const e = by.get(slug) ?? { versions: [], draft: false, best: -1 };
+    const n = ver === 'draft' ? 0 : Number(ver);
+    if (name === 'index.html') { if (ver === 'draft') e.draft = true; else if (Number.isInteger(n)) e.versions.push(n); }
+    if (name === 'manifest.json' && n >= e.best) { e.best = n; e.manifestUrl = f.url; }
+    by.set(slug, e);
+  }
+  return by;
+}
+
+router.on('GET', 'modules', authed(async (req, res, user) => {
+  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
+  let builtIn: unknown[] = [];
+  try { builtIn = ((await (await fetch(`https://${host}/modules/index.json`)).json()) as { modules: unknown[] }).modules; } catch { /* listed below anyway */ }
+  const mine = await myModules(user.id);
+  const own = await Promise.all([...mine.entries()].map(async ([slug, e]) => {
+    const manifest = e.manifestUrl ? JSON.parse((await fetchText(e.manifestUrl)) ?? '{}') : {};
+    const latest = e.versions.length ? Math.max(...e.versions) : null;
+    return { use: latest ? `me/${slug}@${latest}` : null, slug, owner: 'mine', versions: e.versions.sort((a, b) => a - b), has_draft: e.draft, ...manifest };
+  }));
+  res.status(200).json({ modules: [...builtIn, ...own] });
+}));
+
+router.on('GET', 'modules/mine/:slug', authed(async (_req, res, user, { slug }) => {
+  if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
+  const e = (await myModules(user.id)).get(slug);
+  if (!e) { res.status(404).json({ error: 'No module with that name' }); return; }
+  const ver = e.draft ? 'draft' : String(Math.max(...e.versions));
+  const files = await moduleFiles(user.id, slug);
+  const file = (name: string) => files.find((f) => f.pathname === `${modulePrefix(user.id, slug)}${ver}/${name}`);
+  const html = file('index.html') ? await fetchText(file('index.html')!.url) : null;
+  const manifest = file('manifest.json') ? JSON.parse((await fetchText(file('manifest.json')!.url)) ?? '{}') : null;
+  res.status(200).json({ slug, showing: ver, versions: e.versions.sort((a, b) => a - b), has_draft: e.draft, manifest, html });
+}));
+
+// Save (or replace) the draft.
+router.on('POST', 'modules/mine/:slug', authed(async (req, res, user, { slug }) => {
+  if (!SLUG.test(slug)) { res.status(400).json({ error: 'Module names are 2–40 lowercase letters, digits and dashes' }); return; }
+  const { html, manifest } = (req.body ?? {}) as { html?: string; manifest?: unknown };
+  if (typeof html !== 'string' || !html.includes('<')) { res.status(400).json({ error: 'html (the page) is required' }); return; }
+  if (html.length > MAX_HTML) { res.status(400).json({ error: `The page is over ${MAX_HTML} characters; load big libraries from a CDN instead` }); return; }
+  const checked = checkManifest(manifest);
+  if (typeof checked === 'string') { res.status(400).json({ error: checked }); return; }
+  const base = `${modulePrefix(user.id, slug)}draft/`;
+  const opts = { access: 'public' as const, addRandomSuffix: false, allowOverwrite: true, token: blobToken(), cacheControlMaxAge: 0 };
+  await put(`${base}index.html`, html, { ...opts, contentType: 'text/html; charset=utf-8' });
+  await put(`${base}manifest.json`, JSON.stringify({ ...checked, id: `me/${slug}` }), { ...opts, contentType: 'application/json' });
+  res.status(200).json({ slug, use: `me/${slug}@draft`, src: `/um/${user.id}/${slug}/draft/index.html` });
+}));
+
+// Freeze the draft as the next version.
+router.on('POST', 'modules/mine/:slug/publish', authed(async (_req, res, user, { slug }) => {
+  if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
+  const e = (await myModules(user.id)).get(slug);
+  if (!e?.draft) { res.status(404).json({ error: 'There is no draft to publish' }); return; }
+  const files = await moduleFiles(user.id, slug);
+  const next = (e.versions.length ? Math.max(...e.versions) : 0) + 1;
+  const opts = { access: 'public' as const, addRandomSuffix: false, allowOverwrite: false, token: blobToken() };
+  for (const name of ['index.html', 'manifest.json']) {
+    const f = files.find((x) => x.pathname === `${modulePrefix(user.id, slug)}draft/${name}`);
+    const body = f ? await fetchText(f.url) : null;
+    if (body == null) { res.status(500).json({ error: `Couldn't read the draft's ${name}` }); return; }
+    await put(`${modulePrefix(user.id, slug)}${next}/${name}`, body, {
+      ...opts, contentType: name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/json',
+    });
+  }
+  res.status(200).json({ slug, version: next, use: `me/${slug}@${next}`, src: moduleSource(`me/${slug}@${next}`, user.id) });
+}));
+
+// The page of a user's module, unauthenticated (the module host loads it in a web view), under a
+// content policy: same-origin plus the big public CDNs for libraries, nothing it can post to.
+const USER_MODULE_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
+  "worker-src 'self' blob:",
+  "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
+].join('; ');
+
+router.on('GET', 'um/:uid/:slug/:ver/:file', async (_req, res, { uid, slug, ver, file }) => {
+  if (!/^[0-9a-f-]{36}$/.test(uid) || !SLUG.test(slug) || !/^(draft|\d+)$/.test(ver) || !['index.html', 'manifest.json'].includes(file)) {
+    res.status(404).end(); return;
+  }
+  const page = await list({ prefix: `${modulePrefix(uid, slug)}${ver}/${file}`, limit: 1, token: blobToken() });
+  const body = page.blobs[0] ? await fetchText(page.blobs[0].url) : null;
+  if (body == null) { res.status(404).end(); return; }
+  res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/json');
+  res.setHeader('Content-Security-Policy', USER_MODULE_CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', ver === 'draft' ? 'no-store' : 'public, max-age=300');
+  res.status(200).send(body);
+});
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   await router.dispatch(req, res, pathSegments(req));

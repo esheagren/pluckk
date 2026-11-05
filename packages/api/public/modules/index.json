@@ -1,0 +1,216 @@
+{
+ "modules": [
+  {
+   "use": "geo-map@1",
+   "owner": "built-in",
+   "id": "geo-map",
+   "version": "1.0.0",
+   "slots": [
+    "prompt",
+    "respond"
+   ],
+   "describe": "A map from Pluckk's map library (/maps/<id>.json). In prompt it fills the region `highlight` and/or dots the point `mark`. In respond the user clicks once: a point `target` {lat, lon} scores exp(-km / tolerance_km), where tolerance defaults to 6% of the map's diagonal; a region `target` {region} scores 1 inside, 0 outside. On reveal the target shows (with `label`) beside the click.",
+   "props": {
+    "type": "object",
+    "required": [
+     "map"
+    ],
+    "properties": {
+     "map": {
+      "type": "string",
+      "description": "Map id, e.g. china-provinces"
+     },
+     "highlight": {
+      "type": "string",
+      "description": "Region id to fill, e.g. CN-GD"
+     },
+     "mark": {
+      "type": "object",
+      "properties": {
+       "lat": {
+        "type": "number"
+       },
+       "lon": {
+        "type": "number"
+       }
+      }
+     },
+     "target": {
+      "type": "object",
+      "properties": {
+       "lat": {
+        "type": "number"
+       },
+       "lon": {
+        "type": "number"
+       },
+       "region": {
+        "type": "string"
+       }
+      }
+     },
+     "label": {
+      "type": "string",
+      "description": "Name drawn at the target on reveal"
+     },
+     "tolerance_km": {
+      "type": "number"
+     },
+     "max_height": {
+      "type": "number"
+     }
+    }
+   },
+   "samples": [
+    {
+     "slot": "prompt",
+     "props": {
+      "map": "china-provinces",
+      "highlight": "CN-GD"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "map": "china-provinces",
+      "highlight": "CN-SH"
+     }
+    },
+    {
+     "slot": "respond",
+     "props": {
+      "map": "china-provinces",
+      "target": {
+       "lat": 30.67,
+       "lon": 104.07
+      },
+      "label": "Chengdu"
+     }
+    },
+    {
+     "slot": "respond",
+     "props": {
+      "map": "china-provinces",
+      "target": {
+       "region": "CN-SC"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "use": "kmeans@1",
+   "owner": "built-in",
+   "id": "kmeans",
+   "version": "1.0.0",
+   "slots": [
+    "prompt",
+    "reveal"
+   ],
+   "describe": "Steps through k-means on a small made-up 2-D dataset: the unlabelled data, the starting centroids, then alternating assign steps (points take the nearest centroid's colour; the plane is shaded by territory) and update steps (centroids slide to their cluster's mean, with the total squared distance before and after), until nothing changes. Back / Next / Play controls. Deterministic for a given seed.",
+   "props": {
+    "type": "object",
+    "properties": {
+     "k": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 6,
+      "default": 3
+     },
+     "points": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 300,
+      "default": 60
+     },
+     "seed": {
+      "type": "integer",
+      "default": 4
+     },
+     "init": {
+      "enum": [
+       "random",
+       "kmeans++"
+      ],
+      "default": "random"
+     },
+     "height": {
+      "type": "number",
+      "default": 300
+     },
+     "autoplay": {
+      "type": "boolean",
+      "default": false
+     }
+    }
+   },
+   "samples": [
+    {
+     "slot": "reveal",
+     "props": {
+      "k": 3,
+      "points": 60,
+      "seed": 4
+     }
+    },
+    {
+     "slot": "reveal",
+     "props": {
+      "k": 4,
+      "points": 90,
+      "seed": 3,
+      "init": "kmeans++"
+     }
+    }
+   ]
+  },
+  {
+   "use": "speak@1",
+   "owner": "built-in",
+   "id": "speak",
+   "version": "1.0.0",
+   "slots": [
+    "prompt",
+    "reveal"
+   ],
+   "describe": "Reads `text` aloud in `lang` (BCP-47, default zh-CN) with the device's voices, once when shown unless autoplay is false, and again from its button. `label` is the button text (defaults to text).",
+   "props": {
+    "type": "object",
+    "required": [
+     "text"
+    ],
+    "properties": {
+     "text": {
+      "type": "string"
+     },
+     "lang": {
+      "type": "string"
+     },
+     "label": {
+      "type": "string"
+     },
+     "autoplay": {
+      "type": "boolean"
+     }
+    }
+   },
+   "samples": [
+    {
+     "slot": "reveal",
+     "props": {
+      "text": "广东",
+      "lang": "zh-CN"
+     }
+    },
+    {
+     "slot": "reveal",
+     "props": {
+      "text": "的",
+      "label": "的 · de",
+      "autoplay": false
+     }
+    }
+   ]
+  }
+ ]
+}
