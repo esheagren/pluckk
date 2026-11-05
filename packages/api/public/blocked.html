@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pluckk first</title>
+<style>
+  :root { --bg: #fafafa; --text: #2d3436; --muted: #888; --accent: #c9a66b; --card: #fff; --rule: #e0e0e0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f0f0f; --text: #f5f5f5; --muted: #8a8a8a; --card: #1c1c1e; --rule: #2e2e30; } }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, system-ui, sans-serif; }
+  main { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 16px; padding: 36px 40px; max-width: 420px; text-align: center; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { color: var(--muted); margin: 0 0 24px; }
+  a.button { display: inline-block; background: var(--accent); color: #1a1a1a; text-decoration: none; font-weight: 600;
+             padding: 10px 22px; border-radius: 999px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1 id="h">Cards first</h1>
+    <p id="p">This site opens once today's Pluckk is done. Finishing earns you a few minutes here.</p>
+    <a class="button" href="pluckk://practice">Open Pluckk</a>
+  </div>
+</main>
+<script>
+  // The site that was gated, from ?site=, named in the heading. Text only, never HTML.
+  const site = new URLSearchParams(location.search).get('site');
+  if (site && /^[a-z0-9.-]{1,64}$/i.test(site)) document.getElementById('h').textContent = `${site} is waiting`;
+</script>
+</body>
+</html>

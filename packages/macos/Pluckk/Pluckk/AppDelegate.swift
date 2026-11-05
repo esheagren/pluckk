@@ -23,9 +23,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupDoubleCmdDetector()
         selectionReader = SelectionReader()
         DeckFiler.shared.start()
+        SiteGate.shared.start()
 
         // Hide dock icon (we're a menu bar app)
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// pluckk://practice (the gated-site page's button) brings Practice forward.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "pluckk" && $0.host == "practice" }) else { return }
+        AppState.shared.currentView = .practice
+        panel.expand()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

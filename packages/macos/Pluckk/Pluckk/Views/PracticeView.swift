@@ -414,6 +414,7 @@ final class PracticeSession: ObservableObject {
                                                                      interval: outcome.map { ($0.lower, $0.upper) },
                                                                      practice: practiceRun != nil)
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
+                SiteGate.shared.noteReview()
                 reviewedCount += 1
                 if rating == .again {
                     var requeued = item
@@ -1237,6 +1238,7 @@ struct PracticeView: View {
                     }
                 }
                 .padding(.top, 4)
+                SiteGateOffer(dayDone: dayDone).padding(.top, 6)
                 Button(action: {
                     if let url = URL(string: Config.webappURL) { NSWorkspace.shared.open(url) }
                 }) {
@@ -1254,6 +1256,12 @@ struct PracticeView: View {
     private var offerExtra: Bool {
         if session.aheadState == .offer { return true }
         guard session.aheadState == .none, session.focusDeck == nil, let counts = session.todayCounts else { return false }
+        return counts.review == 0 && counts.learn == 0
+    }
+
+    /// Nothing due and no new cards left under today's limits, across every deck.
+    private var dayDone: Bool {
+        guard session.practiceRun == nil, session.focusDeck == nil, let counts = session.todayCounts else { return false }
         return counts.review == 0 && counts.learn == 0
     }
 

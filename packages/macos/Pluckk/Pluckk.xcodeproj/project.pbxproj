@@ -12,6 +12,7 @@
 		031 /* BookReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133 /* BookReader.swift */; };
 		030 /* NumberCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132 /* NumberCardViews.swift */; };
 		034 /* ModuleHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 136 /* ModuleHost.swift */; };
+		035 /* SiteGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137 /* SiteGate.swift */; };
 		029 /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131 /* StatisticsView.swift */; };
 		028 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* AssistantView.swift */; };
 		027 /* AssistantEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129 /* AssistantEngine.swift */; };
@@ -50,6 +51,7 @@
 		133 /* BookReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookReader.swift; sourceTree = "<group>"; };
 		132 /* NumberCardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberCardViews.swift; sourceTree = "<group>"; };
 		136 /* ModuleHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleHost.swift; sourceTree = "<group>"; };
+		137 /* SiteGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteGate.swift; sourceTree = "<group>"; };
 		131 /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		130 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		129 /* AssistantEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEngine.swift; sourceTree = "<group>"; };
@@ -188,6 +190,7 @@
 				133 /* BookReader.swift */,
 				132 /* NumberCardViews.swift */,
 				136 /* ModuleHost.swift */,
+				137 /* SiteGate.swift */,
 				131 /* StatisticsView.swift */,
 				130 /* AssistantView.swift */,
 				129 /* AssistantEngine.swift */,
@@ -305,6 +308,7 @@
 				031 /* BookReader.swift in Sources */,
 				030 /* NumberCardViews.swift in Sources */,
 				034 /* ModuleHost.swift in Sources */,
+				035 /* SiteGate.swift in Sources */,
 				029 /* StatisticsView.swift in Sources */,
 				028 /* AssistantView.swift in Sources */,
 				027 /* AssistantEngine.swift in Sources */,

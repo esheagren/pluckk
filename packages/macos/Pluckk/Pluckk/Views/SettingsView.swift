@@ -20,6 +20,10 @@ struct SettingsView: View {
 
                 Divider()
 
+                SiteGateSettings()
+
+                Divider()
+
                 AssistantSettingsSection()
 
                 Divider()
@@ -318,4 +322,30 @@ struct SettingsView: View {
 #Preview {
     SettingsView()
         .frame(width: 320, height: 600)
+}
+
+/// Which sites stay closed until the day's cards are done, and how long finishing opens them for.
+struct SiteGateSettings: View {
+    @AppStorage(SiteGate.enabledKey) private var enabled = true
+    @AppStorage(SiteGate.sitesKey) private var sites = SiteGate.defaultSites
+    @AppStorage(SiteGate.minutesKey) private var minutes = SiteGate.defaultMinutes
+    @ObservedObject private var gate = SiteGate.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Earn your sites").font(.headline)
+            Toggle("Keep these sites closed until today's cards are done", isOn: $enabled)
+            TextField("youtube.com, x.com", text: $sites)
+                .textFieldStyle(.roundedBorder)
+                .disabled(!enabled)
+            Stepper("Finishing opens them for \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
+                .disabled(!enabled)
+            Text("Works in Chrome, Brave, Edge, Arc and Safari while Pluckk is running. After the first window of the day, each new one takes \(SiteGate.cardsPerWindow) more cards. macOS asks once per browser to let Pluckk control it. Turn on Launch at login below so the gate is always up.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if let problem = gate.permissionProblem {
+                Text(problem).font(.caption).foregroundColor(PluckkTheme.Dark.warning)
+            }
+        }
+    }
 }
