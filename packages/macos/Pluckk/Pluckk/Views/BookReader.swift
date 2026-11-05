@@ -119,11 +119,14 @@ enum BookLibrary {
         }
 
         // Titles are written differently on cards and in the corpus ("Children's Thinking: What
-        // Develops?" against "Children’s Thinking"), so compare them with quotes made plain, and
-        // fall back to the main title before any colon.
+        // Develops?" against "Children’s Thinking", "The Lever of Riches" against "Lever of
+        // Riches"), so compare them with quotes made plain and a leading article dropped, and fall
+        // back to the main title before any colon.
         func plain(_ t: String) -> String {
-            String(String.UnicodeScalarView(t.lowercased().unicodeScalars.map(CorpusBook.plain)))
+            var s = String(String.UnicodeScalarView(t.lowercased().unicodeScalars.map(CorpusBook.plain)))
                 .trimmingCharacters(in: .whitespaces)
+            for article in ["the ", "a ", "an "] where s.hasPrefix(article) { s = String(s.dropFirst(article.count)); break }
+            return s
         }
         func main(_ t: String) -> String {
             plain(t).components(separatedBy: ":").first!.trimmingCharacters(in: .whitespaces)

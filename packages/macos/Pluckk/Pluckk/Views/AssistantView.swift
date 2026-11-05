@@ -116,6 +116,10 @@ struct AssistantView: View {
                 .font(.system(size: 12))
                 .foregroundColor(Color(hex: "e5a14b"))
                 .fixedSize(horizontal: false, vertical: true)
+        case .module:
+            if let module = item.module, let slot = item.slot {
+                ModulePreview(module: module, slot: slot, title: item.text)
+            }
         }
     }
 

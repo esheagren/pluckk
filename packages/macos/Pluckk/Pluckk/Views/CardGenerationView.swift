@@ -41,48 +41,35 @@ struct CardGenerationView: View {
         }
     }
 
-    // MARK: - Empty State (matches extension no-selection-state)
+    // MARK: - Nothing captured: write a card, or capture something to have cards made
 
+    /// The one place cards are made: write one here, or select text anywhere and double-tap ⌘
+    /// (or use a screenshot) to have some generated, which then replace this form.
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            // Logo icon - using the actual PNG from extension
-            if let logoImage = NSImage(named: "icon-128") {
-                Image(nsImage: logoImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 64, height: 64)
-                    .opacity(0.8)
-            } else {
-                // Fallback to PluckkLogo if PNG not found
-                PluckkLogo(size: 64)
-                    .opacity(0.8)
-            }
-
-            Text("Select text anywhere and double-tap ⌘")
-                .font(.system(size: PluckkTheme.FontSize.small))
-                .foregroundColor(colorScheme == .dark
-                    ? PluckkTheme.Dark.textSecondary
-                    : PluckkTheme.Light.textSecondary)
-
-            // A screenshot on the clipboard is offered here rather than picked up by ⌘⌘,
-            // which would otherwise grab whatever stale image was copied earlier.
-            if hasClipboardImage {
-                Button(action: useClipboardImage) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Use screenshot from clipboard")
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").font(.system(size: 11)).foregroundColor(PluckkTheme.accent)
+                Text("Or select text anywhere and double-tap ⌘ to have cards made from it")
+                    .font(.system(size: 12))
+                    .foregroundColor(colorScheme == .dark ? PluckkTheme.Dark.textSecondary : PluckkTheme.Light.textSecondary)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                // A screenshot on the clipboard is offered here rather than picked up by ⌘⌘,
+                // which would otherwise grab whatever stale image was copied earlier.
+                if hasClipboardImage {
+                    Button(action: useClipboardImage) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "photo").font(.system(size: 11, weight: .semibold))
+                            Text("Use clipboard screenshot")
+                        }
                     }
+                    .buttonStyle(PillButtonStyle(prominent: false))
                 }
-                .buttonStyle(PillButtonStyle(prominent: false))
             }
-
-            Spacer()
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+            NewCardView()
         }
-        .frame(maxWidth: .infinity)
-        .padding()
     }
 
     @Environment(\.colorScheme) var colorScheme

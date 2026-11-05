@@ -620,7 +620,7 @@ struct ReviewItem: Decodable, Identifiable {
     var isNumeric: Bool { answer_type == "numeric" && numeric_answer != nil }
 
     /// Answered inside a module (a click on a map…), which suggests the rating.
-    var respondModule: ModuleUse? { modules?.respond.flatMap { $0.path == nil ? nil : $0 } }
+    var respondModule: ModuleUse? { modules?.respond.flatMap { $0.pageURL == nil ? nil : $0 } }
 
     /// The card waits for an answer (a range or a module's) before it reveals on Space or a click.
     var answersFirst: Bool { isNumeric || respondModule != nil }

@@ -38,6 +38,15 @@ indirect enum JSONValue: Codable, Equatable {
 struct ModuleUse: Decodable, Equatable {
     let use: String
     let props: JSONValue?
+    /// Where the page is served, as the API gives it ("/modules/geo-map/1/index.html", or
+    /// "/um/<user>/<slug>/<n>/index.html" for his own modules).
+    var src: String? = nil
+
+    /// The page's full address on the API's own server.
+    var pageURL: URL? {
+        if let src, src.hasPrefix("/modules/") || src.hasPrefix("/um/") { return URL(string: "\(Config.backendURL)\(src)") }
+        return path.flatMap { URL(string: "\(Config.backendURL)/modules/\($0)/index.html") }
+    }
 
     /// "geo-map@1" → "geo-map/1", the module's folder under /modules.
     var path: String? {
@@ -103,9 +112,7 @@ private struct ModuleWebView: NSViewRepresentable {
         web.setValue(false, forKey: "drawsBackground")
         web.navigationDelegate = context.coordinator
         context.coordinator.web = web
-        if let path = module.path, let url = URL(string: "\(Config.backendURL)/modules/\(path)/index.html") {
-            web.load(URLRequest(url: url))
-        }
+        if let url = module.pageURL { web.load(URLRequest(url: url)) }
         return ModuleContainer(web)
     }
 
@@ -260,4 +267,151 @@ final class ModuleSpeech {
     }
 
     func stop() { synth.stopSpeaking(at: .immediate) }
+}
+
+// MARK: - Trying a module without a card
+
+/// Loads a module page off-screen with given props, the way a card would, and reports what
+/// happened: whether it said it was ready, its height, any responses, and every script error or
+/// blocked load. The assistant uses this to test a module it has just written.
+@MainActor
+final class ModuleProbe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    private var web: WKWebView?
+    private var window: NSWindow?
+    private var lines: [String] = []
+    private var ready: Double?
+    private var finished: CheckedContinuation<Void, Never>?
+    private let slot: ModuleSlot
+    private let props: Any
+
+    private init(slot: ModuleSlot, props: Any) {
+        self.slot = slot
+        self.props = props
+    }
+
+    static func run(url: URL, slot: ModuleSlot, props: Any, dark: Bool = true) async -> String {
+        let probe = ModuleProbe(slot: slot, props: props)
+        return await probe.go(url, dark: dark)
+    }
+
+    private func go(_ url: URL, dark: Bool) async -> String {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let watch = """
+        (function(){
+          const post = (m) => { try { window.webkit.messageHandlers.probe.postMessage(m); } catch (e) {} };
+          addEventListener('error', (e) => post('Script error: ' + (e.message || e) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')), true);
+          addEventListener('unhandledrejection', (e) => post('Unhandled promise rejection: ' + (e.reason && (e.reason.message || e.reason))));
+          document.addEventListener('securitypolicyviolation', (e) => post('Blocked by the content policy: ' + e.blockedURI + ' (' + e.violatedDirective + ')'));
+          const ce = console.error.bind(console);
+          console.error = (...a) => { post('console.error: ' + a.map(String).join(' ')); ce(...a); };
+        })();
+        """
+        config.userContentController.addUserScript(WKUserScript(source: watch, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.add(self, name: "probe")
+        config.userContentController.add(self, name: "pluckk")
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 560, height: 600), configuration: config)
+        web.navigationDelegate = self
+        let window = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: 560, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = web
+        window.orderBack(nil)
+        self.web = web
+        self.window = window
+        web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            finished = c
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.finish() }
+        }
+        web.configuration.userContentController.removeAllScriptMessageHandlers()
+        window.orderOut(nil)
+        self.web = nil
+        self.window = nil
+        var report = [ready.map { "Loaded and ready, \(Int($0)) px tall." } ?? "It never called Pluckk.ready() within 8 seconds."]
+        report += lines.isEmpty ? ["No script errors."] : Array(lines.prefix(20))
+        return report.joined(separator: "\n")
+    }
+
+    private func finish() {
+        finished?.resume()
+        finished = nil
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let theme = ["dark": true, "text": "#f5f5f5", "muted": "#777777", "accent": "#c9a66b", "surface": "#1c1c1e",
+                     "rule": "#2e2e30", "success": "#27ae60", "warning": "#e5a14b"] as [String: Any]
+        let message: [String: Any] = ["pluckk": ["type": "init", "slot": slot.rawValue, "props": props, "theme": theme,
+                                                 "revealed": slot == .reveal, "capabilities": ["speak": true]]]
+        guard let data = try? JSONSerialization.data(withJSONObject: message), let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.postMessage(\(json), '*')")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        lines.append("The page failed to load: \(error.localizedDescription)"); finish()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        lines.append("The page failed to load: \(error.localizedDescription)"); finish()
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if let http = response.response as? HTTPURLResponse, http.statusCode >= 400 {
+            lines.append("The page answered HTTP \(http.statusCode).")
+        }
+        decisionHandler(.allow)
+    }
+
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "probe", let text = message.body as? String {
+            lines.append(text)
+            return
+        }
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        switch type {
+        case "ready":
+            ready = body["height"] as? Double ?? 0
+            // Give it a moment to show any errors from drawing, then report.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.finish() }
+        case "response":
+            lines.append("It sent a response: score \(body["score"] ?? "?"), \(body["summary"] ?? "")")
+        default:
+            break
+        }
+    }
+}
+
+/// A module shown in the assistant panel, to try before it goes on a card. Answering it reveals
+/// it, as a card would.
+struct ModulePreview: View {
+    let module: ModuleUse
+    let slot: ModuleSlot
+    let title: String
+    @State private var revealed = false
+    @State private var response: ModuleResponse?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Spacer()
+                if slot == .respond {
+                    Button(revealed ? "Reset" : "Reveal") {
+                        if revealed { revealed = false; response = nil } else { revealed = true }
+                    }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            ModuleSlotView(module: module, slot: slot, revealed: revealed || slot == .reveal) { r in
+                response = r
+                revealed = true
+            }
+            .id(revealed ? "r" : "q")
+            if let response {
+                Text("\(response.summary ?? "Answered") · suggests \(response.rating.title)")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
+    }
 }

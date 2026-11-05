@@ -72,15 +72,16 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    // Writing a card now lives in New card (generate), and decks in Statistics.
                     case .newCard:
                         if appState.isAuthenticated {
-                            NewCardView()
+                            CardGenerationView()
                         } else {
                             LoginView()
                         }
                     case .decks:
                         if appState.isAuthenticated {
-                            DecksView()
+                            StatisticsView()
                         } else {
                             LoginView()
                         }
@@ -197,10 +198,14 @@ struct NavRail: View {
                 if practice.focusDeck != nil { practice.leaveDeck() }
                 appState.currentView = .practice
             }
-            tab(.generate, icon: "sparkles", label: "Create")
-            tab(.newCard, icon: "plus", label: "New card")
-            tab(.decks, icon: "square.grid.2x2", label: "Decks")
-            tab(.statistics, icon: "chart.pie", label: "Statistics")
+            RailTab(icon: "plus", label: "New card",
+                    isActive: appState.currentView == .generate || appState.currentView == .newCard) {
+                appState.currentView = .generate
+            }
+            RailTab(icon: "chart.pie", label: "Decks & statistics",
+                    isActive: appState.currentView == .statistics || appState.currentView == .decks) {
+                appState.currentView = .statistics
+            }
             Spacer()
             tab(.settings, icon: "gearshape", label: "Settings")
         }

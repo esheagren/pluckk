@@ -126,8 +126,9 @@ enum AssistantTools {
                  schema: object(["id": string], required: ["id"])),
         ToolSpec(name: "list_deck_cards", description: "List a deck's cards, newest first, 50 at a time.",
                  schema: object(["deck_id": string("A deck id, or \"unfiled\"."), "offset": integer], required: ["deck_id"])),
-        ToolSpec(name: "create_card", description: "Create a card. The answer is the crisp fact; context is the optional extension shown after it. For a question whose answer is a number, also give number (and unit, e.g. GJ or %): Erik then answers it with a 95% range.",
+        ToolSpec(name: "create_card", description: "Create a card. The answer is the crisp fact; context is the optional extension shown after it. For a question whose answer is a number, also give number (and unit, e.g. GJ or %): Erik then answers it with a 95% range. modules (optional) is {prompt, respond, reveal} as in set_card_modules.",
                  schema: object(["question": string, "answer": string, "context": string,
+                                 "modules": ["type": "object"] as [String: Any],
                                  "number": ["type": "number"] as [String: Any], "unit": string,
                                  "deck_id": string("Omit for unfiled."),
                                  "tags": ["type": "array", "items": ["type": "string"]] as [String: Any]],
@@ -146,6 +147,27 @@ enum AssistantTools {
                  schema: object(["id": string, "paragraphs_around": integer], required: ["id"])),
         ToolSpec(name: "delete_card", description: "Delete a card. Erik is asked to approve first.",
                  schema: object(["id": string], required: ["id"])),
+        ToolSpec(name: "list_modules", description: "List the card modules there are: built-in ones (maps, audio, simulations…) and Erik's own. Each has a use string to put on a card, the slots it fits (prompt: shown with the question; respond: how the card is answered, its score suggests the rating; reveal: shown with the answer), what it does, the props it takes and sample props.",
+                 schema: object([:])),
+        ToolSpec(name: "get_module", description: "Read one module in full, including its page's source code. Give use (e.g. kmeans@1, or me/<slug>@2) or slug for one of Erik's own (shows its draft if there is one). Read a built-in such as kmeans@1 or geo-map@1 before writing a module, to see how one is built.",
+                 schema: object(["use": string, "slug": string])),
+        ToolSpec(name: "set_card_modules", description: "Put modules on a card, replacing any it has: prompt and reveal are lists of {use, props}, respond is one {use, props} or null. Give clear: true to remove them all. The card's question and answer stay as its text (shown above the modules, and wherever modules can't run). Only published modules (built-in, or me/<slug>@<n>) can go on cards.",
+                 schema: object(["id": string,
+                                 "prompt": ["type": "array", "items": ["type": "object"]] as [String: Any],
+                                 "respond": ["type": "object"] as [String: Any],
+                                 "reveal": ["type": "array", "items": ["type": "object"]] as [String: Any],
+                                 "clear": ["type": "boolean"] as [String: Any]], required: ["id"])),
+        ToolSpec(name: "save_module", description: "Write or rewrite one of Erik's own modules as a draft: a single HTML page plus what it does. The draft is loaded right away off-screen with sample_props to test it, and the result comes back (ready or not, its height, every script error and anything the content policy blocked); it also appears in the panel for Erik to try. Fix and save again until it loads clean. Drafts aren't on any card until published.",
+                 schema: object(["slug": string("Lowercase letters, digits and dashes, e.g. gradient-descent."),
+                                 "html": string("The whole page. See the module rules in the system prompt."),
+                                 "describe": string("What it shows or asks, and every prop it takes, in a few sentences: other models read this to use it."),
+                                 "slots": ["type": "array", "items": ["type": "string", "enum": ["prompt", "respond", "reveal"]]] as [String: Any],
+                                 "props_schema": ["type": "object", "description": "JSON Schema for its props."] as [String: Any],
+                                 "sample_props": ["type": "object", "description": "Props to test it with."] as [String: Any],
+                                 "sample_slot": string("Which slot to test in; defaults to the first.")],
+                                required: ["slug", "html", "describe", "slots"])),
+        ToolSpec(name: "publish_module", description: "Publish the draft of one of Erik's modules as its next version, so cards can use it as me/<slug>@<n>. Erik is asked to approve first. Cards keep the version they were given; publishing again doesn't change them until set_card_modules moves them on.",
+                 schema: object(["slug": string], required: ["slug"])),
         ToolSpec(name: "list_files", description: "List a folder inside the allowed folders.",
                  schema: object(["path": string], required: ["path"])),
         ToolSpec(name: "search_files", description: "Search file names and text inside the allowed folders for an exact phrase, ignoring case. Every file is checked and the files with the most matches come first. Each excerpt shows a character offset to read from. Books are under the bookshelf corpus's text folder; search a title to find its file. Use one distinctive word rather than a long phrase.",
@@ -157,6 +179,20 @@ enum AssistantTools {
     ]
 
     private static var files: FileTools { FileTools(roots: AssistantSettings.folders) }
+
+    /// How card modules work, always appended to the system prompt (which Erik may have edited).
+    static let moduleGuide = """
+    Card modules. A card can carry modules: small web pages that show or ask things text can't, such as a map with a province highlighted, a click-on-the-map question scored by distance, audio, or a step-through simulation of an algorithm. A card has three slots: prompt (shown with the question), respond (one module that is the answer; its 0–1 score suggests the rating: ≥0.9 easy, ≥0.7 good, ≥0.4 hard, else again) and reveal (shown with the answer). The card's question and answer stay as text above them. list_modules shows what exists; set_card_modules or create_card's modules puts them on cards. Suggest a module when a picture, a map, a sound or a simulation would teach better than words, and keep cards atomic: one idea per card, one module doing one job.
+
+    You can also write new modules for Erik with save_module, test them, and publish them with publish_module once he's tried the draft. Read a built-in with get_module first (kmeans@1 shows a step-through simulation, geo-map@1 a respond module). Rules for a module page:
+    - One self-contained HTML page. Include <script src="/modules/pluckk-module.js"></script>, and for step-through simulations also /modules/pluckk-stepper.js (PluckkStepper.mount(element, {steps, render}) gives Back/Next/Play and captions).
+    - Pluckk.on('init', ({slot, props, theme, revealed}) => { draw; Pluckk.ready(); }). Call Pluckk.ready() once drawn: the host sizes the page to its content, so never make it scroll and give it a definite height.
+    - In respond: one interaction, then Pluckk.respond(data, score 0–1, "short summary"); show the right answer on Pluckk.on('reveal', …). Pluckk.speak(text, lang) reads aloud.
+    - Colours come from the host's theme as CSS variables: --text, --muted, --accent, --surface, --rule, --success, --warning; html[data-theme] is dark or light. Background transparent. Use Pluckk.on('theme', redraw).
+    - Make the same props always give the same result (seed any randomness). Put content in props, not in the page, so one module serves many cards.
+    - Libraries can come from cdn.jsdelivr.net, cdnjs.cloudflare.com or unpkg.com (three.js, D3, Pyodide…), pinned to an exact version. The page can't send anything anywhere; it can only load from Pluckk and those CDNs.
+    - Under 600 KB. Keys (Space, 1–5, arrows) belong to the app, so use clicks and buttons.
+    """
 
     struct Failure: LocalizedError {
         let message: String
@@ -179,6 +215,11 @@ enum AssistantTools {
         case "set_card_image": return "Putting an image on a card"
         case "read_card_source": return "Reading the card's source"
         case "delete_card": return "Deleting a card"
+        case "list_modules": return "Listing modules"
+        case "get_module": return "Reading module \(text("use").isEmpty ? text("slug") : text("use"))"
+        case "set_card_modules": return args["clear"] as? Bool == true ? "Removing a card's modules" : "Putting modules on a card"
+        case "save_module": return "Writing module \(text("slug")) and testing it"
+        case "publish_module": return "Publishing module \(text("slug"))"
         case "list_files": return "Listing \(text("path"))"
         case "search_files": return "Searching files: \(text("query"))"
         case "read_file": return "Reading \(text("path"))"
@@ -201,6 +242,12 @@ enum AssistantTools {
         case "write_file":
             let path = args["path"] as? String ?? "", content = args["content"] as? String ?? ""
             return ("Write this file?", (try? files.writePreview(path, content: content)) ?? path)
+        case "publish_module":
+            let slug = args["slug"] as? String ?? ""
+            let module = (try? await json(path: "/modules/mine/\(slug)")) as? [String: Any]
+            let describe = ((module?["manifest"] as? [String: Any])?["describe"] as? String) ?? ""
+            let next = ((module?["versions"] as? [Int])?.max() ?? 0) + 1
+            return ("Publish module \(slug) as version \(next)?", "Cards can then use me/\(slug)@\(next). Try it in the preview above first.\n\n\(describe)")
         default:
             return nil
         }
@@ -265,6 +312,7 @@ enum AssistantTools {
             let id = try cardId()
             guard var card = try await json(path: "/cards/\(id)") as? [String: Any] else { throw Failure(message: "Card not found.") }
             let events = (try? await json(path: "/cards/\(id)/events") as? [String: Any])?["events"] as? [[String: Any]] ?? []
+            if let modules = (card["spec"] as? [String: Any])?["modules"] { card["modules"] = modules }
             for key in ["user_id", "spec", "snapshot_seq", "snapshot_algorithm", "capture_key", "is_deleted"] { card[key] = nil }
             card["review_count"] = events.filter { $0["type"] as? String == "card.review" }.count
             return encode(card)
@@ -283,6 +331,10 @@ enum AssistantTools {
                 folderId: try deck(text("deck_id")) as? String, tags: args["tags"] as? [String] ?? [],
                 provenance: ["identifier": "app:pluckk/assistant", "title": "Pluckk assistant", "containerTitle": "Pluckk"],
                 number: (args["number"] as? Double).map { (value: $0, unit: text("unit")) })
+            if let modules = args["modules"] as? [String: Any], !modules.isEmpty {
+                _ = try await PluckkAPI.shared.raw(token: try token(), method: "PATCH", path: "/api/v1/cards/\(id)",
+                                                   json: ["modules": try moduleSlots(modules)])
+            }
             cardCache = nil
             PracticeSession.shared.refreshTodayCounts()
             return "Created card \(id)."
@@ -377,6 +429,64 @@ enum AssistantTools {
             PracticeSession.shared.removeCardExternally(id)
             return "Deleted card \(id)."
 
+        case "list_modules":
+            let result = try await json(path: "/modules") as? [String: Any]
+            let modules = (result?["modules"] as? [[String: Any]] ?? []).map { m -> [String: Any] in
+                var out = m
+                for key in ["version", "id"] { out[key] = nil }
+                return out
+            }
+            return encode(modules)
+
+        case "get_module":
+            if let use = text("use"), !use.hasPrefix("me/") {
+                let all = (try await json(path: "/modules") as? [String: Any])?["modules"] as? [[String: Any]] ?? []
+                guard var m = all.first(where: { $0["use"] as? String == use }),
+                      let parts = Optional(use.split(separator: "@")), parts.count == 2,
+                      let url = URL(string: "\(Config.backendURL)/modules/\(parts[0])/\(parts[1])/index.html")
+                else { throw Failure(message: "There's no built-in module \(use). list_modules shows them.") }
+                let (data, _) = try await URLSession.shared.data(from: url)
+                m["html"] = String(decoding: data, as: UTF8.self)
+                m["runtime"] = "Pages include /modules/pluckk-module.js (and /modules/pluckk-stepper.js for step-through simulations)."
+                return encode(m)
+            }
+            let slug = text("slug") ?? text("use").map { String($0.dropFirst(3).split(separator: "@").first ?? "") }
+            guard let slug, !slug.isEmpty else { throw Failure(message: "Give use or slug.") }
+            return encode(try await json(path: "/modules/mine/\(slug)"))
+
+        case "set_card_modules":
+            let id = try cardId()
+            let modules: Any = args["clear"] as? Bool == true ? NSNull() : try moduleSlots(args)
+            _ = try await PluckkAPI.shared.raw(token: try token(), method: "PATCH", path: "/api/v1/cards/\(id)", json: ["modules": modules])
+            cardCache = nil
+            return modules is NSNull ? "Removed the modules from card \(id)." : "Modules set on card \(id). They show the next time the card comes up."
+
+        case "save_module":
+            guard let slug = text("slug"), let html = args["html"] as? String, let describe = text("describe") else {
+                throw Failure(message: "A module needs a slug, its html and a describe.")
+            }
+            let slots = (args["slots"] as? [String] ?? []).filter { ["prompt", "respond", "reveal"].contains($0) }
+            guard !slots.isEmpty else { throw Failure(message: "Give the slots it fits: prompt, respond and/or reveal.") }
+            let sampleProps = args["sample_props"] as? [String: Any] ?? [:]
+            let slot = ModuleSlot(rawValue: text("sample_slot") ?? slots[0]) ?? .reveal
+            var manifest: [String: Any] = ["describe": describe, "slots": slots, "samples": [["slot": slot.rawValue, "props": sampleProps]]]
+            if let schema = args["props_schema"] as? [String: Any] { manifest["props"] = schema }
+            let data = try await PluckkAPI.shared.raw(token: try token(), method: "POST", path: "/api/v1/modules/mine/\(slug)",
+                                                      json: ["html": html, "manifest": manifest])
+            guard let saved = try JSONSerialization.jsonObject(with: data) as? [String: Any], let src = saved["src"] as? String,
+                  let url = URL(string: "\(Config.backendURL)\(src)") else { throw Failure(message: "The server didn't say where the draft is.") }
+            let report = await ModuleProbe.run(url: url, slot: slot, props: sampleProps)
+            let props = (try? JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: sampleProps))) ?? .object([:])
+            AssistantSession.shared.showModule(ModuleUse(use: "me/\(slug)@draft", props: props, src: src), slot: slot,
+                                               title: "Draft · \(slug) · \(slot.rawValue)")
+            return "Saved the draft of \(slug). Test load with the sample props:\n\(report)\nIt's in the panel for Erik to try. Publish with publish_module when it works."
+
+        case "publish_module":
+            guard let slug = text("slug") else { throw Failure(message: "Which module?") }
+            let data = try await PluckkAPI.shared.raw(token: try token(), method: "POST", path: "/api/v1/modules/mine/\(slug)/publish", json: [:])
+            let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            return "Published. Cards can use \(result?["use"] as? String ?? "me/\(slug)")."
+
         case "list_files":
             return try files.list(text("path") ?? ".")
         case "search_files":
@@ -391,6 +501,25 @@ enum AssistantTools {
         default:
             throw Failure(message: "There's no tool called \(name).")
         }
+    }
+
+    /// {prompt, respond, reveal} from the model's arguments, checked enough to give a clear error
+    /// before the server's.
+    private static func moduleSlots(_ args: [String: Any]) throws -> [String: Any] {
+        func use(_ value: Any?) throws -> [String: Any]? {
+            guard let value, !(value is NSNull) else { return nil }
+            guard let o = value as? [String: Any], let u = o["use"] as? String,
+                  u.range(of: #"^(me/)?[a-z0-9-]+@\d+$"#, options: .regularExpression) != nil else {
+                throw Failure(message: "Each module is {use, props}, with use like kmeans@1 or me/<slug>@1 (published, not a draft).")
+            }
+            return ["use": u, "props": o["props"] as? [String: Any] ?? [:]]
+        }
+        var out: [String: Any] = [:]
+        if let list = args["prompt"] as? [Any] { out["prompt"] = try list.compactMap(use) }
+        if let r = try use(args["respond"]) { out["respond"] = r }
+        if let list = args["reveal"] as? [Any] { out["reveal"] = try list.compactMap(use) }
+        guard !out.isEmpty else { throw Failure(message: "Give prompt, respond or reveal, or clear: true.") }
+        return out
     }
 
     private static func token() throws -> String {
@@ -429,11 +558,13 @@ enum AssistantTools {
 // MARK: - Session
 
 struct AssistantItem: Identifiable {
-    enum Kind { case user, assistant, tool, notice, image, file }
+    enum Kind { case user, assistant, tool, notice, image, file, module }
     let id = UUID()
     let kind: Kind
     var text: String
     var file: URL? = nil
+    var module: ModuleUse? = nil
+    var slot: ModuleSlot? = nil
 }
 
 struct AssistantApproval: Identifiable {
@@ -515,7 +646,7 @@ final class AssistantSession: ObservableObject {
     private func run(_ config: ProviderConfig) async {
         var current: UUID?
         let folders = AssistantSettings.folders.joined(separator: ", ")
-        let system = AssistantSettings.systemPrompt + "\n\nFolders you can use: \(folders.isEmpty ? "none yet" : folders)."
+        let system = AssistantSettings.systemPrompt + "\n\n" + AssistantTools.moduleGuide + "\n\nFolders you can use: \(folders.isEmpty ? "none yet" : folders)."
         defer {
             removeIfEmpty(current)
             busy = false
@@ -575,6 +706,11 @@ final class AssistantSession: ObservableObject {
     }
 
     /// The image with this id, or the newest one.
+    /// A module draft to try, shown in the conversation.
+    func showModule(_ module: ModuleUse, slot: ModuleSlot, title: String) {
+        items.append(AssistantItem(kind: .module, text: title, module: module, slot: slot))
+    }
+
     func madeImage(_ id: String?) -> URL? {
         madeFiles.last { made in (id == nil || made.id == id) && NSImage(contentsOf: made.file) != nil }?.file
     }
@@ -617,6 +753,10 @@ final class AssistantSession: ObservableObject {
                 lines.append("Current card id: \(card.card_id)")
                 if let deck = card.folder?.name { lines.append("Deck: \(deck)") }
                 lines.append("Question: \(card.question)")
+                if let m = card.modules {
+                    let uses = (m.prompt ?? []).map { "prompt \($0.use)" } + [m.respond].compactMap { $0.map { "respond \($0.use)" } } + (m.reveal ?? []).map { "reveal \($0.use)" }
+                    if !uses.isEmpty { lines.append("Modules on it: " + uses.joined(separator: ", ")) }
+                }
                 lines.append(practice.revealed ? "Answer (revealed): \(card.answer)" : "Answer: not revealed yet")
                 if let source = card.bookSource {
                     lines.append("Source: \(source.book)" + (source.chapter.map { ", \($0)" } ?? "") + " (read_card_source gives the passage)")
