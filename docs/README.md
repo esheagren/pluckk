@@ -1,3 +1,6 @@
+> Early product notes, kept for history; parts describe the original Chrome-extension version.
+> For the current state of Pluckk, start at the [README](../README.md).
+
 # Pluckk
 
 Pluckk is a browser-native spaced repetition system that transforms how people learn from the web. Highlight text on any webpage, get AI-generated flashcards, and review them using proven memory science.

@@ -18,7 +18,7 @@ import { getDb, schema } from '../lib/db.js';
 
 const ANKI_DIR = `${process.env.HOME}/Library/Application Support/Anki2/User 1`;
 const MEDIA_DIR = join(ANKI_DIR, 'collection.media');
-const USER_EMAIL = 'esheagren1995@gmail.com';
+const USER_EMAIL = (process.env.PLUCKK_USER_EMAIL ?? (() => { throw new Error('Set PLUCKK_USER_EMAIL to the account to act on'); })());
 const which = process.argv[2];
 const dry = process.argv.includes('--dry');
 if (which !== 'gwoa' && which !== 'spanish') { console.error('usage: import-anki.ts gwoa|spanish [--dry]'); process.exit(1); }

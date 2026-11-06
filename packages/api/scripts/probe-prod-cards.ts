@@ -7,7 +7,7 @@ import { getDb, schema } from '../lib/db.js';
 
 const BASE = process.env.PROBE_BASE ?? 'https://pluckk-api.vercel.app';
 const db = getDb();
-const [user] = await db.select().from(schema.users).where(eq(schema.users.email, 'esheagren1995@gmail.com'));
+const [user] = await db.select().from(schema.users).where(eq(schema.users.email, (process.env.PLUCKK_USER_EMAIL ?? (() => { throw new Error('Set PLUCKK_USER_EMAIL to the account to act on'); })())));
 const token = await issueToken(user.id, 'probe-prod');
 const call = async (method: string, path: string, body?: unknown) => {
   const r = await fetch(`${BASE}/api/v1/${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });

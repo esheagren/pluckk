@@ -6,7 +6,7 @@ import { getDb, schema } from '../lib/db.js';
 const names = process.argv.slice(2);
 if (names.length === 0) { console.error('usage: delete-folder.ts <name> [...]'); process.exit(1); }
 const db = getDb();
-const [user] = await db.select().from(schema.users).where(eq(schema.users.email, 'esheagren1995@gmail.com'));
+const [user] = await db.select().from(schema.users).where(eq(schema.users.email, (process.env.PLUCKK_USER_EMAIL ?? (() => { throw new Error('Set PLUCKK_USER_EMAIL to the account to act on'); })())));
 
 for (const name of names) {
   const [folder] = await db.select().from(schema.folders).where(and(eq(schema.folders.userId, user.id), eq(schema.folders.name, name)));
