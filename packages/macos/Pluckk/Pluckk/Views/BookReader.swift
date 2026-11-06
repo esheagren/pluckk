@@ -1,5 +1,6 @@
 import SwiftUI
 import SQLite3
+import WebKit
 
 // "Read in context": a card made from a book in the bookshelf corpus shows the passage it came
 // from, highlighted among its neighbouring paragraphs, right under the card, with the printed page
@@ -13,6 +14,8 @@ struct BookChapter {
 
 /// One book, loaded once, as Unicode scalars so the corpus's offsets index it directly.
 final class CorpusBook {
+    /// Its id in the corpus database, for searching its passages.
+    var corpusId: Int?
     let title: String
     let chapters: [BookChapter]
     let scalars: [Unicode.Scalar]
@@ -151,6 +154,7 @@ enum BookLibrary {
         }
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
         let book = CorpusBook(title: found[1], chapters: chapters, text: text)
+        book.corpusId = Int(found[0])
         if !found[3].isEmpty {
             book.epubPath = found[3].hasPrefix("/") ? found[3] : (root as NSString).appendingPathComponent(found[3])
         }
@@ -182,6 +186,8 @@ struct ReaderPassage: Identifiable {
     let cardId: String?
     let selection: String?
     var page: String?
+    /// The card's question and answer, to look for the book's discussion of it and a Wikipedia article.
+    var query: String?
 
     var chapterTitle: String {
         book.chapters.indices.contains(chapter) ? book.chapters[chapter].title : ""
@@ -404,13 +410,38 @@ struct SourceExcerpt: View {
 
     private var isDark: Bool { colorScheme == .dark }
 
+    enum Tab: String, CaseIterable { case passage = "Passage", book = "In the book", wikipedia = "Wikipedia" }
+    @State private var tab = Tab.passage
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            Picker("", selection: $tab) {
+                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 360)
+            switch tab {
+            case .passage: passageView
+            case .book: BookEvidenceView(passage: passage, isDark: isDark, textScale: textScale)
+            case .wikipedia: WikipediaPanel(cardId: passage.cardId, query: passage.query ?? passage.selection ?? passage.book.title)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(isDark ? Color(hex: "151412") : Color(hex: "fbf8f2")))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    /// The card's own passage, in its chapter.
+    @ViewBuilder private var passageView: some View {
         let all = passage.paragraphs
         let centre = all.firstIndex { $0.marked != nil }
         let from = centre.map { max(0, $0 - before) } ?? 0
         let to = centre.map { min(all.count - 1, $0 + after) } ?? min(all.count - 1, after + before)
         VStack(alignment: .leading, spacing: 12) {
-            header
             if from > 0 { moreButton("More above", "chevron.up") { before += 4 } }
             if !all.isEmpty {
                 ForEach(all[from...to]) { paragraph in
@@ -424,11 +455,6 @@ struct SourceExcerpt: View {
             }
             if to < all.count - 1 { moreButton("More below", "chevron.down") { after += 4 } }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(isDark ? Color(hex: "151412") : Color(hex: "fbf8f2")))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
     }
 
     private var header: some View {
@@ -479,5 +505,250 @@ extension ReaderPassage {
     func withPage() async -> String? {
         guard let epub = book.epubPath, let selection else { return nil }
         return await Task.detached(priority: .userInitiated) { EpubPages.label(epub: epub, selection: selection) }.value
+    }
+}
+
+// MARK: - The book's own discussion of a card
+
+/// Where the rest of the book takes up what the card asks: a card made from an introduction or a
+/// summary points here to the chapters that argue it. Found with the corpus's own hybrid search
+/// (BM25 plus its embedding model), run in its Python, skipping the card's own passage.
+enum BookEvidence {
+    struct Hit: Decodable, Identifiable {
+        let start: Int
+        let end: Int
+        let chapter: String?
+        var id: Int { start }
+    }
+
+    private static var cache: [String: [Hit]] = [:]
+
+    static func find(book: CorpusBook, query: String, exclude: (start: Int, end: Int)?, key: String) async throws -> [Hit] {
+        if let hits = cache[key] { return hits }
+        guard let id = book.corpusId, let root = await BookLibrary.root else { throw RelatedCards.Failure("The bookshelf corpus isn't set up.") }
+        let python = (root as NSString).appendingPathComponent(".venv/bin/python")
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Pluckk", isDirectory: true)
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let script = support.appendingPathComponent("book-evidence.py")
+        try Self.script.write(to: script, atomically: true, encoding: .utf8)
+        let request: [String: Any] = ["root": root, "book_id": id, "query": String(query.prefix(1500)), "k": 4,
+                                      "exclude": exclude.map { [$0.start, $0.end] } ?? []]
+        let input = try JSONSerialization.data(withJSONObject: request)
+        let output: Data = try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: python)
+            process.arguments = [script.path]
+            process.currentDirectoryURL = URL(fileURLWithPath: root)
+            process.environment = ["HF_HUB_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false", "HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin"]
+            let stdin = Pipe(), stdout = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            stdin.fileHandleForWriting.write(input)
+            try stdin.fileHandleForWriting.close()
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return data
+        }.value
+        guard let last = String(decoding: output, as: UTF8.self).split(separator: "\n").last,
+              let hits = try? JSONDecoder().decode([Hit].self, from: Data(last.utf8)) else {
+            throw RelatedCards.Failure("The book search didn't return anything.")
+        }
+        cache[key] = hits
+        return hits
+    }
+
+    private static let script = #"""
+import sys, json
+req = json.load(sys.stdin)
+sys.path.insert(0, req["root"] + "/scripts")
+import search as S
+conn = S.open_db(req["root"] + "/db/bookshelf.sqlite")
+ex = req.get("exclude") or []
+pad = 6000
+rows = S.search_chunks(conn, req["query"], k=req.get("k", 4) * 10, book_ids=[req["book_id"]])
+out = []
+for r in rows:
+    s, e = r.get("start_char"), r.get("end_char")
+    if s is None: continue
+    if ex and s < ex[1] + pad and e > ex[0] - pad: continue          # the card's own passage
+    if any(s < o["end"] + 1500 and e > o["start"] - 1500 for o in out): continue   # one per stretch
+    out.append({"start": s, "end": e, "chapter": r.get("chapter_title")})
+    if len(out) >= req.get("k", 4): break
+print(json.dumps(out))
+"""#
+}
+
+struct BookEvidenceView: View {
+    let passage: ReaderPassage
+    let isDark: Bool
+    let textScale: Double
+    @State private var hits: [BookEvidence.Hit]?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let hits {
+                if hits.isEmpty {
+                    Text("Nothing else in the book stood out for this card.").font(.system(size: 12)).foregroundColor(.secondary)
+                }
+                ForEach(hits) { hit in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(label(hit)).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                        Text(passage.book.text(hit.start, hit.end).trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(size: 14 * CGFloat(textScale > 0 ? textScale : 1), design: .serif))
+                            .lineSpacing(4)
+                            .foregroundColor(isDark ? Color(hex: "e6e1d8") : Color(hex: "2b2925"))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+                }
+                Text("Found by searching the rest of the book for what the card asks, skipping the card's own passage.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            } else if let problem {
+                Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Looking through the book…").font(.system(size: 12)).foregroundColor(.secondary)
+                }
+            }
+        }
+        .task(id: passage.id) {
+            do {
+                hits = try await BookEvidence.find(book: passage.book, query: passage.query ?? passage.selection ?? "",
+                                                   exclude: passage.highlight, key: "\(passage.book.title)|\(passage.cardId ?? passage.selection ?? "")")
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
+    }
+
+    /// Chapter, or how far through the book when it has no chapters.
+    private func label(_ hit: BookEvidence.Hit) -> String {
+        if let chapter = hit.chapter, !chapter.isEmpty { return chapter }
+        let total = max(1, passage.book.scalars.count)
+        return "\(Int(Double(hit.start) / Double(total) * 100))% through the book"
+    }
+}
+
+// MARK: - Wikipedia beside the book
+
+/// The Wikipedia article for a card, chosen by searching for its question and answer, shown in
+/// the reader. A different article can be picked; the choice is kept for that card.
+struct WikipediaPanel: View {
+    let cardId: String?
+    let query: String
+    @State private var candidates: [String] = []
+    @State private var title: String?
+    @State private var searchText = ""
+    @State private var problem: String?
+
+    private var storeKey: String? { cardId.map { "wikipedia.\($0)" } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(candidates, id: \.self) { t in Button(t) { choose(t) } }
+                } label: {
+                    Text(title ?? "Finding an article…").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Other articles that match this card")
+                TextField("Search Wikipedia", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .frame(maxWidth: 220)
+                    .onSubmit { Task { await search(searchText, pickFirst: true) } }
+                Spacer()
+                if let title, let url = Self.url(title, mobile: false) {
+                    Button(action: { NSWorkspace.shared.open(url) }) { Image(systemName: "arrow.up.right.square") }
+                        .buttonStyle(.plain).foregroundColor(.secondary).help("Open in the browser")
+                }
+            }
+            if let problem {
+                Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
+            } else if let title, let url = Self.url(title, mobile: true) {
+                WikiWebView(url: url)
+                    .frame(height: 560)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .id(title)
+            }
+        }
+        .task(id: cardId ?? query) {
+            if let key = storeKey, let saved = UserDefaults.standard.string(forKey: key) { title = saved }
+            await search(Self.searchable(query), pickFirst: title == nil)
+        }
+    }
+
+    private func choose(_ t: String) {
+        title = t
+        if let key = storeKey { UserDefaults.standard.set(t, forKey: key) }
+    }
+
+    private func search(_ text: String, pickFirst: Bool) async {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, var c = URLComponents(string: "https://en.wikipedia.org/w/api.php") else { return }
+        c.queryItems = [.init(name: "action", value: "query"), .init(name: "list", value: "search"), .init(name: "srsearch", value: q),
+                        .init(name: "srlimit", value: "8"), .init(name: "format", value: "json")]
+        guard let url = c.url else { return }
+        var request = URLRequest(url: url)
+        request.setValue("Pluckk/1.0 (spaced-repetition app)", forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let found = ((json?["query"] as? [String: Any])?["search"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
+            if !found.isEmpty { candidates = found }
+            if pickFirst, let first = found.first { title = first; problem = nil }
+            if found.isEmpty && title == nil { problem = "No Wikipedia article matched. Try the search box." }
+        } catch {
+            if title == nil { problem = "Couldn't reach Wikipedia." }
+        }
+    }
+
+    /// Search text from a card: its answer's first line and the question's words, without the
+    /// small words that only dilute a search.
+    static func searchable(_ text: String) -> String {
+        let stop: Set<String> = ["what","which","who","why","how","when","where","does","did","do","is","are","was","were","the","a","an","of","in","on","to","for","and","or","as","by","with","that","this","their","his","her","its","it","be","according","about","from","into","than","then","they","them","he","she"]
+        let words = text.replacingOccurrences(of: #"[^\p{L}\p{N}\s-]"#, with: " ", options: .regularExpression)
+            .split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            .filter { !stop.contains($0.lowercased()) && $0.count > 1 }
+        return words.prefix(12).joined(separator: " ")
+    }
+
+    static func url(_ title: String, mobile: Bool) -> URL? {
+        let path = title.replacingOccurrences(of: " ", with: "_").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
+        return URL(string: "https://\(mobile ? "en.m" : "en").wikipedia.org/wiki/\(path)")
+    }
+}
+
+private struct WikiWebView: NSViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> ModuleContainer {
+        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        web.navigationDelegate = context.coordinator
+        web.load(URLRequest(url: url))
+        return ModuleContainer(web)
+    }
+
+    func updateNSView(_ view: ModuleContainer, context: Context) {}
+
+    /// Wikipedia stays in the panel; links elsewhere open in the browser.
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            let host = action.request.url?.host ?? ""
+            if host.hasSuffix("wikipedia.org") || host.hasSuffix("wikimedia.org") || action.navigationType == .other { decisionHandler(.allow); return }
+            if let url = action.request.url { NSWorkspace.shared.open(url) }
+            decisionHandler(.cancel)
+        }
     }
 }

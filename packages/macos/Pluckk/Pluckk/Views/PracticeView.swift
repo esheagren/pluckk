@@ -346,7 +346,9 @@ final class PracticeSession: ObservableObject {
             notice = "\(source.book) isn't in your bookshelf corpus."
             return
         }
-        reading = opened.passage
+        var passage = opened.passage
+        passage.query = "\(item.question)\n\(item.answer)"
+        reading = passage
         if !opened.found { notice = "Couldn't find this card's passage, so the chapter shows from its start." }
         let id = opened.passage.id
         Task {
