@@ -58,45 +58,41 @@ struct StatisticsView: View {
 
     var body: some View {
         GeometryReader { outer in
-            HStack(spacing: 0) {
-                // Left third: the new-card ring on top, the statistics under it.
-                ScrollView {
+            let wide = outer.size.width > 980
+            ScrollView {
+                if wide {
+                    HStack(alignment: .top, spacing: 28) {
+                        VStack(alignment: .leading, spacing: 10) { ringAndTable }
+                            .frame(maxWidth: 560)
+                        WorkloadForecastView(revision: savedRevision)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 8)
+                    }
+                    .padding(20)
+                } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        GeometryReader { geo in ringWithDecks(in: geo.size) }
-                            .frame(height: ringHeight)
-
-                        deckRows
-
-                        if let notice {
-                            Text(notice)
-                                .font(.system(size: 11))
-                                .foregroundColor(PluckkTheme.Dark.error)
-                                .frame(maxWidth: .infinity)
-                        }
-
+                        ringAndTable
                         Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 8)
-
                         WorkloadForecastView(revision: savedRevision)
                     }
                     .padding(16)
                 }
-                .scrollIndicators(.hidden)
-                .frame(width: max(440, outer.size.width / 3))
-
-                Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
-
-                // Right two-thirds: one deck's cards.
-                if let deck = shownDeck {
-                    DeckBrowserPanel(deck: deck, allDecks: decks,
-                                     onSelect: { openDeck = $0 },
-                                     onChanged: { Task { await refreshDecks() } })
-                        .id(deck.id)
-                } else {
-                    Spacer()
-                }
             }
+            .scrollIndicators(.hidden)
         }
         .task { await load() }
+    }
+
+    @ViewBuilder private var ringAndTable: some View {
+        GeometryReader { geo in ringWithDecks(in: geo.size) }
+            .frame(height: ringHeight)
+        deckRows
+        if let notice {
+            Text(notice)
+                .font(.system(size: 11))
+                .foregroundColor(PluckkTheme.Dark.error)
+                .frame(maxWidth: .infinity)
+        }
     }
 
     /// Counts again after a card is moved, deleted or reviewed elsewhere; limits stay as they are.
@@ -284,7 +280,7 @@ struct StatisticsView: View {
         .padding(.vertical, 5).padding(.horizontal, 4)
         .background(RoundedRectangle(cornerRadius: 6).fill(open ? Color.primary.opacity(0.07) : .clear))
         .contentShape(Rectangle())
-        .onTapGesture { openDeck = deck }
+        .onTapGesture { openDeck = deck; AppState.shared.openDeckId = deck.id; AppState.shared.currentView = .decks }
         .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.05)).frame(height: 1) }
     }
 

@@ -411,10 +411,11 @@ class PluckkAPI {
 
     /// One page of a deck's cards, newest first. `folderId` nil = unfiled.
     /// `state` narrows to "new" (never reviewed), "due" (reviewed, due now) or "seen" (reviewed).
-    func cards(token: String, folderId: String?, limit: Int, offset: Int, state: String? = nil) async throws -> [LibraryCard] {
+    func cards(token: String, folderId: String?, limit: Int, offset: Int, state: String? = nil, tag: String? = nil) async throws -> [LibraryCard] {
         let folder = folderId ?? "unfiled"
+        let tagPart = tag.flatMap { $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) }.map { "&tag=\($0)" } ?? ""
         let data = try await send(token: token, method: "GET",
-                                  path: "/api/v1/cards?folder_id=\(folder)&limit=\(limit)&offset=\(offset)" + (state.map { "&state=\($0)" } ?? ""))
+                                  path: "/api/v1/cards?folder_id=\(folder)&limit=\(limit)&offset=\(offset)" + (state.map { "&state=\($0)" } ?? "") + tagPart)
         return try JSONDecoder().decode([LibraryCard].self, from: data)
     }
 

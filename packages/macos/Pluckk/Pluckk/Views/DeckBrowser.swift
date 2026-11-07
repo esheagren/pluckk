@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// One deck's cards, beside the Statistics ring: two to a row, each labelled new, due or when it's
-/// next due, with filters, search, and on hover edit, flag, move and delete.
+/// One deck's cards: a single toolbar line (deck, filter, search, practice), the cards in a grid,
+/// and the card that's clicked open underneath in a full editor (see CardEditorPane).
 struct DeckBrowserPanel: View {
     let deck: DeckSummary
     let allDecks: [DeckSummary]
@@ -10,9 +10,10 @@ struct DeckBrowserPanel: View {
     let onChanged: () -> Void
 
     enum Filter: String, CaseIterable, Identifiable {
-        case all, new, due, seen
+        case all, new, due, seen, rework, leech
         var id: String { rawValue }
-        var state: String? { self == .all ? nil : rawValue }
+        var state: String? { [.new, .due, .seen].contains(self) ? rawValue : nil }
+        var tag: String? { self == .rework ? Rework.tag : self == .leech ? "leech" : nil }
     }
 
     @State private var filter = Filter.all
@@ -23,27 +24,34 @@ struct DeckBrowserPanel: View {
     @State private var notice: String?
     /// Cards picked with ⌘- or ⇧-click, to practise together.
     @State private var selected: [String] = []
+    /// The card open in the editor below the grid.
+    @State private var openCard: String?
     @Environment(\.colorScheme) private var colorScheme
 
     private static let pageSize = 200
     private var isDark: Bool { colorScheme == .dark }
 
-    private func count(_ f: Filter) -> Int {
+    private func count(_ f: Filter) -> Int? {
         switch f {
         case .all: return deck.total
         case .new: return deck.new
         case .due: return deck.due
         case .seen: return max(0, deck.total - deck.new)
+        case .rework, .leech: return nil
         }
     }
 
     private func label(_ f: Filter) -> String {
+        let name: String
         switch f {
-        case .all: return "All \(count(f))"
-        case .new: return "New \(count(f))"
-        case .due: return "Due \(count(f))"
-        case .seen: return "Learned \(count(f))"
+        case .all: name = "All"
+        case .new: name = "New"
+        case .due: name = "Due"
+        case .seen: name = "Learned"
+        case .rework: name = "Marked for rework"
+        case .leech: name = "Leeches"
         }
+        return count(f).map { "\(name) \($0)" } ?? name
     }
 
     private var shown: [LibraryCard] {
@@ -53,101 +61,121 @@ struct DeckBrowserPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Menu {
-                    ForEach(allDecks) { other in
-                        Button("\(other.title) (\(other.total))") { onSelect(other) }
-                    }
-                } label: {
-                    Text(deck.title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Show another deck")
-                Text("\(deck.total) cards").font(.system(size: 12)).foregroundColor(.secondary)
-                Spacer()
-                Button(action: { practise(deck) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "play.fill").font(.system(size: 9))
-                        Text("Practice")
-                    }
-                }
-                .buttonStyle(PillButtonStyle(prominent: true))
-                .help("Practise this deck's due and new cards")
-                Menu {
-                    Button("All \(deck.total) cards") { practiseRun(.init(title: deck.title, folderId: .some(deck.folder_id))) }
-                    Button("Learned cards only (\(count(.seen)))") {
-                        practiseRun(.init(title: "\(deck.title) · learned", folderId: .some(deck.folder_id), filter: .learned))
-                    }
-                    .disabled(count(.seen) == 0)
-                    Button("Cards I missed in the last 30 days") {
-                        practiseRun(.init(title: "\(deck.title) · missed", folderId: .some(deck.folder_id), filter: .missed))
-                    }
-                    Divider()
-                    Text("Practice ignores due dates and leaves them as they are. Again brings a card back tomorrow.")
-                } label: {
-                    Text("Practise anyway").font(.system(size: 12, weight: .medium))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Practise cards now, whatever their schedule; due dates stay as they are")
-            }
-            if !selected.isEmpty {
-                HStack(spacing: 10) {
-                    Text("\(selected.count) selected").font(.system(size: 12)).foregroundColor(.secondary)
-                    Button(action: practiseSelected) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.fill").font(.system(size: 9))
-                            Text("Practise \(selected.count)")
-                        }
-                    }
-                    .buttonStyle(PillButtonStyle(prominent: true))
-                    Button("Clear") { selected = [] }
-                        .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
-                    Spacer()
-                }
-            }
+        VStack(spacing: 0) {
+            toolbar
+                .padding(.horizontal, 16).padding(.vertical, 10)
             if let notice {
-                Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error)
+                Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error).padding(.horizontal, 16).padding(.bottom, 6)
             }
-            Picker("", selection: $filter) {
-                ForEach(Filter.allCases) { Text(label($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            TextField("Search these cards", text: $search)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
-
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), alignment: .top)],
-                          spacing: 10) {
-                    ForEach(shown) { card in
-                        CardTile(card: card, moveTargets: allDecks.filter { $0.id != deck.id },
-                                 isSelected: selected.contains(card.id),
-                                 onPick: { pick(card, extend: $0) },
-                                 onPractise: { practiseRun(.init(title: Self.short(card.question), cardIds: [card.id])) },
-                                 onSave: { q, a in save(card, q, a) },
-                                 onToggleRework: { toggleRework(card) },
-                                 onMove: { move(card, to: $0) },
-                                 onDelete: { delete(card) })
-                            .onAppear { if card.id == cards.last?.id { loadMore() } }
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    grid
+                        .frame(height: openCard == nil ? geo.size.height : max(160, geo.size.height * 0.38))
+                    if let id = openCard {
+                        Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+                        CardEditorPane(cardId: id, decks: allDecks,
+                                       onSaved: { q, a, tags, image in
+                                           if let i = cards.firstIndex(where: { $0.id == id }) {
+                                               cards[i].question = q; cards[i].answer = a; cards[i].tags = tags
+                                           }
+                                       },
+                                       onRemoved: {
+                                           cards.removeAll { $0.id == id }
+                                           openCard = nil
+                                           onChanged()
+                                       },
+                                       onClose: { openCard = nil })
+                            .id(id)
                     }
                 }
-                if loading { ProgressView().controlSize(.small).padding() }
-                if reachedEnd && cards.isEmpty {
-                    Text("No cards here.").font(.system(size: 13)).foregroundColor(.secondary).padding(.top, 30)
-                }
             }
-            .scrollIndicators(.hidden)
         }
-        .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: filter) { await reload() }
-        .onChange(of: deck.id) { _ in selected = [] }
+        .onChange(of: deck.id) { _ in selected = []; openCard = nil }
+    }
+
+    /// Deck, filter, search and practice, on one line.
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            Menu {
+                ForEach(allDecks) { other in Button("\(other.title) (\(other.total))") { onSelect(other) } }
+            } label: {
+                Text(deck.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+            }
+            .menuStyle(.borderlessButton).fixedSize().help("Show another deck")
+            Menu {
+                ForEach(Filter.allCases) { f in
+                    Button { filter = f } label: { Text(label(f) + (f == filter ? "  ✓" : "")) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "line.3.horizontal.decrease.circle").font(.system(size: 11))
+                    Text(label(filter)).font(.system(size: 12))
+                }
+            }
+            .menuStyle(.borderlessButton).fixedSize().help("Show some of this deck's cards")
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
+                TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 12))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+            .frame(maxWidth: 240)
+            if !selected.isEmpty {
+                Button(action: practiseSelected) {
+                    HStack(spacing: 4) { Image(systemName: "play.fill").font(.system(size: 8)); Text("Practise \(selected.count)") }
+                }
+                .buttonStyle(PillButtonStyle(prominent: false))
+                Button(action: { selected = [] }) { Image(systemName: "xmark.circle.fill").font(.system(size: 12)) }
+                    .buttonStyle(.plain).foregroundColor(.secondary).help("Clear the picked cards")
+            }
+            Spacer(minLength: 6)
+            Button(action: { practise(deck) }) {
+                HStack(spacing: 5) { Image(systemName: "play.fill").font(.system(size: 9)); Text("Practice") }
+            }
+            .buttonStyle(PillButtonStyle(prominent: true))
+            .help("Practise this deck's due and new cards")
+            Menu {
+                Button("All \(deck.total) cards") { practiseRun(.init(title: deck.title, folderId: .some(deck.folder_id))) }
+                Button("Learned cards only (\(count(.seen) ?? 0))") {
+                    practiseRun(.init(title: "\(deck.title) · learned", folderId: .some(deck.folder_id), filter: .learned))
+                }
+                .disabled((count(.seen) ?? 0) == 0)
+                Button("Cards I missed in the last 30 days") {
+                    practiseRun(.init(title: "\(deck.title) · missed", folderId: .some(deck.folder_id), filter: .missed))
+                }
+                Divider()
+                Text("Practice ignores due dates and leaves them as they are. Again brings a card back tomorrow.")
+            } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("Practise cards now, whatever their schedule")
+        }
+    }
+
+    private var grid: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10, alignment: .top)], spacing: 10) {
+                ForEach(shown) { card in
+                    CardTile(card: card, moveTargets: allDecks.filter { $0.id != deck.id },
+                             isSelected: selected.contains(card.id), isOpen: openCard == card.id,
+                             onOpen: { openCard = card.id },
+                             onPick: { pick(card, extend: $0) },
+                             onPractise: { practiseRun(.init(title: Self.short(card.question), cardIds: [card.id])) },
+                             onSave: { q, a in save(card, q, a) },
+                             onToggleRework: { toggleRework(card) },
+                             onMove: { move(card, to: $0) },
+                             onDelete: { delete(card) })
+                        .onAppear { if card.id == cards.last?.id { loadMore() } }
+                }
+            }
+            .padding(.horizontal, 16).padding(.bottom, 12)
+            if loading { ProgressView().controlSize(.small).padding() }
+            if reachedEnd && cards.isEmpty {
+                Text(filter == .all ? "No cards here." : "No cards match.").font(.system(size: 13)).foregroundColor(.secondary).padding(.top, 30)
+            }
+        }
+        .scrollIndicators(.hidden)
     }
 
     // MARK: Practising picked cards
@@ -230,7 +258,7 @@ struct DeckBrowserPanel: View {
         Task {
             defer { loading = false }
             guard let page = try? await PluckkAPI.shared.cards(token: token, folderId: deck.folder_id, limit: Self.pageSize,
-                                                              offset: cards.count, state: wanted.state),
+                                                              offset: cards.count, state: wanted.state, tag: wanted.tag),
                   wanted == filter else { return }
             cards += page
             reachedEnd = page.count < Self.pageSize
@@ -244,6 +272,9 @@ private struct CardTile: View {
     let card: LibraryCard
     let moveTargets: [DeckSummary]
     var isSelected = false
+    /// Open in the editor below the grid.
+    var isOpen = false
+    var onOpen: () -> Void = {}
     /// A ⌘- or ⇧-click: pick the card (true when ⇧ extends the pick).
     var onPick: (Bool) -> Void = { _ in }
     var onPractise: () -> Void = {}
@@ -268,13 +299,15 @@ private struct CardTile: View {
         .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isDark ? PluckkTheme.Dark.card : PluckkTheme.Light.card))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke(isSelected ? PluckkTheme.accent : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder).opacity(hovering ? 1 : 0.6),
-                    lineWidth: isSelected ? 2 : 1))
+            .stroke(isSelected || isOpen ? PluckkTheme.accent : (isDark ? PluckkTheme.Dark.cardBorder : PluckkTheme.Light.cardBorder).opacity(hovering ? 1 : 0.6),
+                    lineWidth: isSelected ? 2 : isOpen ? 1.5 : 1))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(isOpen ? PluckkTheme.accent.opacity(0.06) : .clear))
         .onHover { hovering = $0 }
+        .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
             guard !editing else { return }
             let mods = NSEvent.modifierFlags
-            if mods.contains(.command) || mods.contains(.shift) { onPick(mods.contains(.shift)) }
+            if mods.contains(.command) || mods.contains(.shift) { onPick(mods.contains(.shift)) } else { onOpen() }
         })
     }
 
@@ -325,9 +358,7 @@ private struct CardTile: View {
             CardIconButton(systemName: "play.fill", help: "Practise this card now (schedule unchanged)", action: onPractise)
             CardIconButton(systemName: "pencil",
                            help: card.isSimple ? "Edit" : "Two-way and list cards are edited in the web app") {
-                q = card.question
-                a = card.answer
-                editing = true
+                onOpen()
             }
             .disabled(!card.isSimple)
             CardIconButton(systemName: card.isMarkedForRework ? "flag.fill" : "flag",
@@ -398,5 +429,60 @@ private struct CardTile: View {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+    }
+}
+
+
+/// The Decks page: every deck down the side, and the chosen one's cards and editor beside it.
+/// Statistics opens a deck here.
+struct DeckWorkspaceView: View {
+    @ObservedObject private var appState = AppState.shared
+    @State private var decks: [DeckSummary] = []
+    @State private var problem: String?
+
+    private var current: DeckSummary? {
+        appState.openDeckId.flatMap { id in decks.first { $0.id == id } } ?? decks.first
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("DECKS").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundColor(.secondary)
+                        .padding(.horizontal, 10).padding(.bottom, 6)
+                    ForEach(decks) { d in
+                        Button(action: { appState.openDeckId = d.id }) {
+                            HStack {
+                                Text(d.title).font(.system(size: 13, weight: current?.id == d.id ? .semibold : .regular)).lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text("\(d.total)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(current?.id == d.id ? Color.primary.opacity(0.08) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let problem { Text(problem).font(.system(size: 11)).foregroundColor(.secondary).padding(10) }
+                }
+                .padding(.vertical, 14).padding(.horizontal, 8)
+            }
+            .scrollIndicators(.hidden)
+            .frame(width: 210)
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+            if let deck = current {
+                DeckBrowserPanel(deck: deck, allDecks: decks, onSelect: { appState.openDeckId = $0.id },
+                                 onChanged: { Task { await load() } })
+                    .id(deck.id)
+            } else {
+                Spacer()
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let token = AuthManager.shared.accessToken else { return }
+        do { decks = try await PluckkAPI.shared.reviewDecks(token: token) } catch { problem = "Couldn't load your decks." }
     }
 }

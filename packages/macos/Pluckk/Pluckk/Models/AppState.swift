@@ -44,6 +44,8 @@ class AppState: ObservableObject {
     @Published var isAuthenticated = false
     @Published var user: User?
     @Published var currentView: PanelView = .generate
+    /// The deck open on the Decks page (set from Statistics too); nil shows the first.
+    @Published var openDeckId: String?
 
     // Content capture
     @Published var capturedContent: CapturedContent?

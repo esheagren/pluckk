@@ -705,7 +705,8 @@ router.on('GET', 'modules', authed(async (req, res, user) => {
     const latest = e.versions.length ? Math.max(...e.versions) : null;
     return { use: latest ? `me/${slug}@${latest}` : null, slug, owner: 'mine', versions: e.versions.sort((a, b) => a - b), has_draft: e.draft, ...manifest };
   }));
-  res.status(200).json({ modules: [...builtIn, ...own] });
+  // Where this user's own modules are served: me/<slug>@<n> → <base>/<slug>/<n>/index.html.
+  res.status(200).json({ modules: [...builtIn, ...own], user_module_base: `/um/${user.id}` });
 }));
 
 router.on('GET', 'modules/mine/:slug', authed(async (_req, res, user, { slug }) => {

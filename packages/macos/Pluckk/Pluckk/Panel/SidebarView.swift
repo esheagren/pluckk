@@ -81,7 +81,7 @@ struct SidebarView: View {
                         }
                     case .decks:
                         if appState.isAuthenticated {
-                            StatisticsView()
+                            DeckWorkspaceView()
                         } else {
                             LoginView()
                         }
@@ -202,10 +202,8 @@ struct NavRail: View {
                     isActive: appState.currentView == .generate || appState.currentView == .newCard) {
                 appState.currentView = .generate
             }
-            RailTab(icon: "chart.pie", label: "Decks & statistics",
-                    isActive: appState.currentView == .statistics || appState.currentView == .decks) {
-                appState.currentView = .statistics
-            }
+            tab(.decks, icon: "pencil", label: "Decks & cards")
+            tab(.statistics, icon: "chart.pie", label: "Statistics")
             Spacer()
             tab(.settings, icon: "gearshape", label: "Settings")
         }
