@@ -64,9 +64,12 @@ struct StatisticsView: View {
                     HStack(alignment: .top, spacing: 28) {
                         VStack(alignment: .leading, spacing: 10) { ringAndTable }
                             .frame(maxWidth: 560)
-                        WorkloadForecastView(revision: savedRevision)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 8)
+                        VStack(alignment: .leading, spacing: 24) {
+                            WorkloadForecastView(revision: savedRevision)
+                            LearningStatsView()
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
                     }
                     .padding(20)
                 } else {
@@ -74,6 +77,7 @@ struct StatisticsView: View {
                         ringAndTable
                         Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 8)
                         WorkloadForecastView(revision: savedRevision)
+                        LearningStatsView().padding(.top, 16)
                     }
                     .padding(16)
                 }
@@ -592,4 +596,224 @@ struct WorkloadForecastView: View {
             failed = true
         }
     }
+}
+
+// MARK: - Learning science
+
+/// From stats/learning: the forgetting curve, how well ratings predict memory, and whether
+/// effortful retrieval lasts. Each rate carries a 95% interval, drawn as a whisker.
+struct LearningStatsData: Decodable {
+    struct Point: Decodable, Identifiable {
+        let label: String?
+        let rating: String?
+        let n: Int
+        let recalled: Int
+        let rate: Double
+        let lo: Double
+        let hi: Double
+        let medianSeconds: Double?
+        var id: String { label ?? rating ?? "" }
+        var name: String { Self.short[label ?? ""] ?? (label ?? rating ?? "").capitalizedFirst }
+        /// Axis labels short enough for a narrow column.
+        static let short = ["1 day": "1d", "2–3 days": "2–3d", "4–7 days": "4–7d", "8–14 days": "8–14d", "15–30 days": "15–30d",
+                            "31+ days": "31d+", "1.25–2×": "1¼–2×", "over 2×": ">2×"]
+    }
+    struct Deck: Decodable { let deck: String?; let buckets: [Point] }
+    struct Rate: Decodable { let n: Int; let recalled: Int; let rate: Double; let lo: Double; let hi: Double }
+    struct ByReview: Decodable, Identifiable { let review: Int; let medianSeconds: Double; let n: Int; var id: Int { review } }
+    struct Effort: Decodable { let source: String?; let terciles: [Point]; let byReview: [ByReview] }
+    let forgetting: [Deck]
+    let overdue: [Point]
+    let calibration: [Point]
+    let ranges: Rate?
+    let effort: Effort
+}
+
+private extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+struct LearningStatsView: View {
+    @State private var data: LearningStatsData?
+    @State private var problem: String?
+    @State private var deck = "__all__"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("How you learn").font(.system(size: 15, weight: .semibold))
+            if let data {
+                forgetting(data)
+                calibration(data)
+                effort(data)
+            } else if let problem {
+                Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            guard let token = AuthManager.shared.accessToken else { return }
+            do {
+                let raw = try await PluckkAPI.shared.raw(token: token, method: "GET", path: "/api/v1/stats/learning", json: nil)
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                data = try decoder.decode(LearningStatsData.self, from: raw)
+            } catch {
+                problem = "Couldn't load your learning statistics."
+            }
+        }
+    }
+
+    // MARK: Forgetting curve
+
+    @ViewBuilder private func forgetting(_ d: LearningStatsData) -> some View {
+        let decks = d.forgetting.filter { $0.deck != "__all__" && $0.buckets.reduce(0) { $0 + $1.n } >= 15 }
+        let chosen = d.forgetting.first { ($0.deck ?? "Unfiled") == deck || ($0.deck == "__all__" && deck == "__all__") } ?? d.forgetting[0]
+        let points = chosen.buckets.filter { $0.n >= 3 }
+        section("Your forgetting curve",
+                "Recall against time since the last spaced review. The dashed line is 90%; a curve well below it means cards are spaced too far apart, well above it means more reviews than needed.") {
+            HStack {
+                Menu {
+                    Button("All decks") { deck = "__all__" }
+                    ForEach(decks, id: \.deck) { x in Button(x.deck ?? "Unfiled") { deck = x.deck ?? "Unfiled" } }
+                } label: { Text(deck == "__all__" ? "All decks" : deck).font(.system(size: 12)) }
+                    .menuStyle(.borderlessButton).fixedSize()
+                Spacer()
+            }
+            rateChart(points, x: "Since last review")
+            Text("Recall by how late the review was (time since ÷ time scheduled)").font(.system(size: 11)).foregroundColor(.secondary)
+            rateChart(d.overdue.filter { $0.n >= 3 }, x: "Lateness", height: 110)
+            insight(forgettingInsight(chosen.buckets, overdue: d.overdue))
+        }
+    }
+
+    private func forgettingInsight(_ b: [LearningStatsData.Point], overdue: [LearningStatsData.Point]) -> String {
+        let solid = b.filter { $0.n >= 20 }
+        guard let worst = solid.min(by: { $0.rate < $1.rate }) else { return "Not enough spaced reviews yet to draw a curve." }
+        var lines: [String] = []
+        if worst.hi < 0.9 { lines.append("After \(worst.name.lowercased()) you recall \(pct(worst.rate)) (\(pct(worst.lo))–\(pct(worst.hi))), clearly under 90%: those gaps are too long.") }
+        else if let best = solid.max(by: { $0.rate < $1.rate }), best.lo > 0.95 { lines.append("At \(best.name.lowercased()) you recall \(pct(best.rate)): you could space those further.") }
+        else { lines.append("Recall stays near 90% across the gaps with enough reviews: the spacing suits you.") }
+        if let late = overdue.last, let onTime = overdue.first(where: { $0.label == "on time" }), late.n >= 20, onTime.n >= 20, late.hi < onTime.lo {
+            lines.append("Reviews more than twice as late as scheduled drop to \(pct(late.rate)) from \(pct(onTime.rate)) on time.")
+        }
+        return lines.joined(separator: " ")
+    }
+
+    // MARK: Calibration
+
+    @ViewBuilder private func calibration(_ d: LearningStatsData) -> some View {
+        section("Do your ratings predict your memory?",
+                "For each rating you gave, how often you recalled that card at its next review. Well-calibrated ratings climb from Hard to Trivial.") {
+            rateChart(d.calibration.filter { $0.n >= 3 }, x: "Your rating")
+            if let r = d.ranges, r.n > 0 {
+                (Text("95% ranges on number cards caught the answer ")
+                 + Text(pct(r.rate)).bold().foregroundColor(r.hi < 0.95 ? PluckkTheme.Dark.warning : PluckkTheme.Dark.success)
+                 + Text(" of \(r.n) times (\(pct(r.lo))–\(pct(r.hi))); the target is 95%.").foregroundColor(.secondary))
+                    .font(.system(size: 12))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            insight(calibrationInsight(d))
+        }
+    }
+
+    private func calibrationInsight(_ d: LearningStatsData) -> String {
+        var lines: [String] = []
+        let c = Dictionary(uniqueKeysWithValues: d.calibration.map { ($0.rating ?? "", $0) })
+        if let hard = c["hard"], let good = c["good"], hard.n >= 20, good.n >= 20 {
+            if abs(hard.rate - good.rate) < 0.04 {
+                lines.append("Hard and Good predict the same recall (\(pct(hard.rate)) and \(pct(good.rate))), so the difference you feel between them isn't showing up in your memory.")
+            } else if hard.rate < good.rate {
+                lines.append("Hard cards come back at \(pct(hard.rate)), Good at \(pct(good.rate)): your sense of difficulty tracks real forgetting.")
+            }
+        }
+        if let easy = c["easy"], easy.n >= 20 {
+            if easy.hi < 0.9 { lines.append("Easy cards only come back at \(pct(easy.rate)): Easy is overconfident.") }
+            else if let good = c["good"], good.n >= 20, easy.lo > good.hi { lines.append("Easy cards come back at \(pct(easy.rate)), clearly above Good: you can trust an Easy.") }
+        }
+        if let r = d.ranges, r.n >= 20, r.hi < 0.95 {
+            lines.append("Your 95% ranges catch \(pct(r.rate)) of answers: they're too narrow, a classic sign of overconfidence. Widen them until about 1 in 20 misses.")
+        }
+        return lines.isEmpty ? "Needs more reviews before it says much." : lines.joined(separator: " ")
+    }
+
+    // MARK: Effort
+
+    @ViewBuilder private func effort(_ d: LearningStatsData) -> some View {
+        let source = d.effort.source == "reveal" ? "time to reveal the answer" : "time on the card (including reading the answer), until enough time-to-reveal is recorded"
+        section("Does effortful retrieval last?",
+                "Cards you recalled, split into the fastest, middle and slowest thirds by \(source), and how often each was recalled at the next review. The retrieval-effort idea predicts the slow third does best.") {
+            if d.effort.terciles.isEmpty {
+                Text("Needs at least 30 timed recalls.").font(.system(size: 12)).foregroundColor(.secondary)
+            } else {
+                rateChart(d.effort.terciles.map { p in
+                    LearningStatsData.Point(label: "\(p.name) (\(Int((p.medianSeconds ?? 0).rounded())) s)", rating: nil, n: p.n,
+                                            recalled: p.recalled, rate: p.rate, lo: p.lo, hi: p.hi, medianSeconds: p.medianSeconds)
+                }, x: "Retrieval time")
+            }
+            if !d.effort.byReview.isEmpty {
+                Chart(d.effort.byReview) { r in
+                    LineMark(x: .value("Review", r.review), y: .value("Seconds", r.medianSeconds))
+                    PointMark(x: .value("Review", r.review), y: .value("Seconds", r.medianSeconds)).symbolSize(r.n >= 20 ? 30 : 12)
+                }
+                .chartXAxisLabel("Review number of a card").chartYAxisLabel("Median seconds")
+                .frame(height: 110)
+            }
+            insight(effortInsight(d.effort))
+        }
+    }
+
+    private func effortInsight(_ e: LearningStatsData.Effort) -> String {
+        guard e.terciles.count == 3 else { return "" }
+        let fast = e.terciles[0], slow = e.terciles[2]
+        if slow.lo > fast.hi { return "Slow, effortful recalls last better (\(pct(slow.rate)) against \(pct(fast.rate))): the effort is doing work." }
+        if fast.lo > slow.hi { return "Fast recalls last better (\(pct(fast.rate)) against \(pct(slow.rate))): slow ones may be half-guesses." }
+        return "No clear difference yet between fast and slow recalls (\(pct(fast.rate)) and \(pct(slow.rate)))."
+    }
+
+    // MARK: Pieces
+
+    private func section<Content: View>(_ title: String, _ help: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(help).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.04)))
+    }
+
+    /// A point per bucket with its 95% interval as a whisker; the dashed line marks 90%.
+    private func rateChart(_ points: [LearningStatsData.Point], x: String, height: CGFloat = 150) -> some View {
+        Chart {
+            RuleMark(y: .value("Target", 90)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3])).foregroundStyle(.secondary.opacity(0.6))
+            ForEach(points) { p in
+                RuleMark(x: .value(x, p.name), yStart: .value("Low", p.lo * 100), yEnd: .value("High", p.hi * 100))
+                    .lineStyle(StrokeStyle(lineWidth: 2)).foregroundStyle(PluckkTheme.accent.opacity(0.45))
+                PointMark(x: .value(x, p.name), y: .value("Recall", p.rate * 100))
+                    .foregroundStyle(PluckkTheme.accent).symbolSize(p.n >= 20 ? 60 : 25)
+                    .annotation(position: .top, spacing: 2) {
+                        Text("\(pct(p.rate))").font(.system(size: 9)).foregroundColor(.secondary)
+                    }
+            }
+        }
+        .chartYScale(domain: 0...100)
+        .chartYAxis { AxisMarks(values: [0, 50, 90, 100]) { v in AxisGridLine(); AxisValueLabel { Text("\(v.as(Int.self) ?? 0)%") } } }
+        .frame(height: height)
+    }
+
+    private func insight(_ text: String) -> some View {
+        Group {
+            if !text.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "lightbulb").font(.system(size: 11)).foregroundColor(PluckkTheme.accent)
+                    Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func pct(_ x: Double) -> String { "\(Int((x * 100).rounded()))%" }
 }

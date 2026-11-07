@@ -47,7 +47,11 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var queue: [ReviewItem] = []
     @Published private(set) var index = 0
-    @Published var revealed = false
+    @Published var revealed = false {
+        // When the answer showed: time-to-reveal is how long retrieval took (see stats/learning).
+        didSet { if revealed && !oldValue { revealedAt = Date() } else if !revealed { revealedAt = nil } }
+    }
+    private var revealedAt: Date?
     @Published private(set) var reviewedCount = 0
     @Published private(set) var busy = false
     @Published var notice: String?
@@ -450,7 +454,8 @@ final class PracticeSession: ObservableObject {
             do {
                 let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed,
                                                                      interval: outcome.map { ($0.lower, $0.upper) },
-                                                                     practice: practiceRun != nil)
+                                                                     practice: practiceRun != nil,
+                                                                     revealMs: revealedAt.map { Int($0.timeIntervalSince(shownAt) * 1000) })
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
                 if result.leech == true {
                     notice = "That card has slipped \(result.lapses ?? 4) times, so it's flagged as a leech. Rework it rather than drill it; the assistant can help."

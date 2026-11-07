@@ -303,12 +303,13 @@ class PluckkAPI {
 
     /// `interval` is a number card's range; the server records it with the rating.
     func submitReview(token: String, item: ReviewItem, rating: ReviewRating, responseMs: Int,
-                      interval: (lower: Double, upper: Double)? = nil, practice: Bool = false) async throws -> ReviewResult {
+                      interval: (lower: Double, upper: Double)? = nil, practice: Bool = false, revealMs: Int? = nil) async throws -> ReviewResult {
         var body: [String: Any] = [
             "card_id": item.card_id, "component_id": item.component_id,
             "rating": rating.rawValue, "response_time_ms": responseMs,
         ]
         if practice { body["practice"] = true }
+        if let revealMs, revealMs >= 0 { body["reveal_ms"] = revealMs }
         if let interval { body["interval"] = ["lower": interval.lower, "upper": interval.upper] }
         let data = try await send(token: token, method: "POST", path: "/api/v1/review", json: body)
         return try JSONDecoder().decode(ReviewResult.self, from: data)
