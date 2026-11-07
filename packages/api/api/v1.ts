@@ -20,7 +20,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
 import { CLAUDE_FAST_MODEL, extractJson, responseText } from '../lib/models.js';
 import type { ClaudeResponse } from '../lib/claude-types.js';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
@@ -276,6 +276,7 @@ router.on('POST', 'review', authed(async (req, res, user) => {
   await db.insert(schema.reviewLogs).values({
     cardReviewStateId: r.state.id, userId: user.id, cardId: body.card_id, reviewMode: outcome ? 'numeric_interval' : 'standard', rating,
     responseTimeMs: body.response_time_ms ?? null,
+    scoringDetails: body.reveal_ms != null ? { reveal_ms: body.reveal_ms } : null,
     ...(outcome && answer ? {
       responseLower: outcome.lower, responseUpper: outcome.upper, correctAnswer: answer.value, containedAnswer: outcome.contained,
       intervalWidth: outcome.upper - outcome.lower, relativeWidth: outcome.relativeWidth, confidenceLevelUsed: INTERVAL_CONFIDENCE,
@@ -402,6 +403,28 @@ router.on('POST', 'review/practice', authed(async (req, res, user) => {
   const dealt = rows.flatMap((r) => componentIdsOf(specOf(r)).map((componentId) => ({ cardId: r.id, componentId })))
     .slice(0, body.size ?? 200);
   res.status(200).json({ items: await buildItems(db, user.id, dealt) });
+}));
+
+// Learning-science statistics from the review log: forgetting curve (overall and per deck), recall
+// against how overdue a card was, calibration of each rating against the next review, the hit
+// rate of 95% ranges, and retrieval time against later recall. See core/learning.ts.
+router.on('GET', 'stats/learning', authed(async (_req, res, user) => {
+  const r = await getDb().execute(sql`
+    select coalesce(l.card_review_state_id::text, l.card_id::text) as key, f.name as deck, l.rating, l.reviewed_at,
+           l.new_interval, l.review_mode, l.response_time_ms, (l.scoring_details->>'reveal_ms')::int as reveal_ms, l.contained_answer
+    from review_logs l
+    join cards c on c.id = l.card_id
+    left join folders f on f.id = c.folder_id
+    where l.user_id = ${user.id} and c.is_deleted = false
+    order by key, l.reviewed_at`);
+  const rows = (r.rows as Array<Record<string, unknown>>).map((x) => ({
+    key: String(x.key), deck: (x.deck as string | null) ?? null, rating: String(x.rating),
+    at: new Date(x.reviewed_at as string).toISOString(),
+    newInterval: x.new_interval == null ? null : Number(x.new_interval), mode: String(x.review_mode),
+    revealMs: x.reveal_ms == null ? null : Number(x.reveal_ms), responseMs: x.response_time_ms == null ? null : Number(x.response_time_ms),
+    contained: x.contained_answer == null ? null : Boolean(x.contained_answer),
+  }));
+  res.status(200).json(learningStats(rows));
 }));
 
 // The coming workload, day by day: reviews of cards seen before today, reviews of cards still to
