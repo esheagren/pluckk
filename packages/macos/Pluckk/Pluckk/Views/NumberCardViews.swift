@@ -381,3 +381,75 @@ struct TypedBlanksReveal: View {
         }
     }
 }
+
+// MARK: - Written answers
+
+/// A box to write the whole answer in; ⌘↩ or Check sends it to be checked.
+struct WrittenAnswerEntry: View {
+    let busy: Bool
+    let onCheck: (String) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            TextEditor(text: $text)
+                .font(.system(size: 15))
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .frame(minHeight: 90, maxHeight: 200)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text("Write your answer…").font(.system(size: 15)).foregroundColor(.secondary)
+                            .padding(.horizontal, 15).padding(.vertical, 10).allowsHitTesting(false)
+                    }
+                }
+                .focused($focused)
+                .frame(maxWidth: 620)
+            Button(action: check) {
+                HStack(spacing: 6) {
+                    if busy { ProgressView().controlSize(.small) }
+                    Text(busy ? "Checking…" : "Check")
+                    Text("⌘↩").font(.system(size: 11)).opacity(0.6)
+                }
+            }
+            .buttonStyle(PillButtonStyle(prominent: true))
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = true } }
+    }
+
+    private func check() {
+        PluckkPanel.shared?.hostWindow.makeFirstResponder(nil)
+        onCheck(text)
+    }
+}
+
+/// What was written, and which of the answer's ideas it got across.
+struct WrittenAnswerReveal: View {
+    let text: String
+    let grade: PluckkAPI.WrittenGrade?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("YOU WROTE").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundColor(.secondary)
+            Text(text).font(.system(size: 14)).foregroundColor(.secondary).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let grade {
+                ForEach(grade.covered, id: \.self) { idea in
+                    Label(idea, systemImage: "checkmark.circle.fill").font(.system(size: 13))
+                        .foregroundStyle(PluckkTheme.Dark.success, .primary)
+                }
+                ForEach(grade.missed, id: \.self) { idea in
+                    Label(idea, systemImage: "xmark.circle.fill").font(.system(size: 13))
+                        .foregroundStyle(Color(hex: "e5534b"), .primary)
+                }
+            }
+        }
+        .frame(maxWidth: 620, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+    }
+}

@@ -13,7 +13,7 @@ struct CardEditorPane: View {
     let onRemoved: () -> Void
     let onClose: () -> Void
 
-    enum Kind: String, CaseIterable { case recall = "Recall", typed = "Type it", number = "Number" }
+    enum Kind: String, CaseIterable { case recall = "Recall", typed = "Type blanks", written = "Write it", number = "Number" }
 
     @State private var loaded = false
     @State private var kind = Kind.recall
@@ -109,7 +109,7 @@ struct CardEditorPane: View {
         HStack(spacing: 10) {
             Text("Answered by").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
             Picker("", selection: $kind) { ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 300)
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 400)
             Text(kindHelp).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
         }
         .onChange(of: kind) { new in
@@ -121,6 +121,7 @@ struct CardEditorPane: View {
         switch kind {
         case .recall: return "Recall it, reveal, rate yourself."
         case .typed: return "Click words in the question to make them blanks to type."
+        case .written: return "Write the whole answer out; Claude checks it against this one."
         case .number: return "Answer with a 95% range around the number."
         }
     }
@@ -424,7 +425,8 @@ struct CardEditorPane: View {
             numberText = (card["numeric_answer"] as? Double).map { NumberText.format($0) } ?? ""
             unit = card["numeric_unit"] as? String ?? ""
             blankWords = []
-            kind = isNumber ? .number : TypedBlanks.expected(question: question, answer: answer) != nil ? .typed : .recall
+            let writtenMode = ((card["spec"] as? [String: Any])?["answer_type"] as? String) == "written"
+            kind = isNumber ? .number : writtenMode ? .written : TypedBlanks.expected(question: question, answer: answer) != nil ? .typed : .recall
             if kind == .typed { seedBlanksFromFact() }
             modules = []
             if let m = (card["spec"] as? [String: Any])?["modules"] as? [String: Any] {
@@ -466,7 +468,7 @@ struct CardEditorPane: View {
             body["numeric_answer"] = value
             body["numeric_unit"] = unit.isEmpty ? NSNull() : unit
         } else {
-            body["answer_type"] = "text"
+            body["answer_type"] = kind == .written ? "written" : "text"
         }
         var slots: [String: Any] = [:]
         for slot in [ModuleSlot.prompt, .respond, .reveal] {

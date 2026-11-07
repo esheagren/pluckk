@@ -41,6 +41,9 @@ export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSp
   });
   // Modules: the body's when it sets them (null clears), otherwise the card's own.
   if (spec.style !== 'qa_bidirectional' && spec.style !== 'cloze_list') {
+    // A written-answer card stays one unless the body changes its answer type.
+    const wanted = 'answer_type' in b ? b.answer_type : base && 'answerType' in base ? base.answerType : undefined;
+    if (wanted === 'written' && spec.answerType !== 'numeric') spec.answerType = 'written';
     const modules = 'modules' in b ? b.modules : base && 'modules' in base ? base.modules : null;
     if (modules && (modules.prompt?.length || modules.respond || modules.reveal?.length)) spec.modules = modules;
   }

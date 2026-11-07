@@ -18,6 +18,8 @@ import { and, desc, eq, gte, inArray, isNull, like, sql } from 'drizzle-orm';
 import { selectSession, todayCounts } from '../lib/mixer.js';
 import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
+import { CLAUDE_FAST_MODEL, extractJson, responseText } from '../lib/models.js';
+import type { ClaudeResponse } from '../lib/claude-types.js';
 import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
@@ -293,6 +295,45 @@ router.on('POST', 'review', authed(async (req, res, user) => {
     leech = true;
   }
   res.status(200).json({ state: snake(r.state), component_id: r.componentId, previews: r.previews, event_id: r.eventId, rating, leech, lapses: r.state.lapseCount });
+}));
+
+// A written answer, checked against the card's own by a fast model: which of the answer's ideas
+// it covers, which it misses, and a 0–1 score (the client turns it into a suggested rating).
+router.on('POST', 'review/grade', authed(async (req, res, user) => {
+  const { card_id, response } = (req.body ?? {}) as { card_id?: string; response?: string };
+  if (!card_id || typeof response !== 'string') { res.status(400).json({ error: 'card_id and response required' }); return; }
+  const written = response.trim().slice(0, 4000);
+  if (!written) { res.status(200).json({ score: 0, covered: [], missed: [], feedback: 'Nothing was written.' }); return; }
+  const row = await getCardRow(getDb(), user.id, card_id);
+  const spec = specOf(row);
+  if (spec.style === 'qa_bidirectional' || spec.style === 'cloze_list') { res.status(400).json({ error: 'Not a simple card' }); return; }
+  const prompt = `You check a learner's written answer to a flashcard against the card's reference answer.
+Judge meaning, not wording: paraphrase, different order and extra correct detail are fine; a missing or wrong key idea is not.
+Break the reference answer into its key ideas (usually 1–5), then decide which the learner's answer gets across.
+
+Question: ${spec.question}
+
+Reference answer: ${spec.answer}
+
+Learner's answer: ${written}
+
+Reply with only a JSON object: {"score": <0 to 1, the share of key ideas conveyed, lowered for anything stated wrongly>, "covered": [<key ideas they got, a few words each>], "missed": [<key ideas missing or wrong, a few words each>], "feedback": "<one short sentence to the learner>"}`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': process.env.CLAUDE_API_KEY || '', 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: CLAUDE_FAST_MODEL, max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!r.ok) { res.status(502).json({ error: `The checker failed (${r.status})` }); return; }
+  const text = responseText((await r.json()) as ClaudeResponse) ?? '';
+  try {
+    const g = JSON.parse(extractJson(text)) as { score?: number; covered?: string[]; missed?: string[]; feedback?: string };
+    res.status(200).json({
+      score: Math.max(0, Math.min(1, Number(g.score) || 0)),
+      covered: (g.covered ?? []).slice(0, 8), missed: (g.missed ?? []).slice(0, 8), feedback: g.feedback ?? '',
+    });
+  } catch {
+    res.status(502).json({ error: "The checker's reply couldn't be read" });
+  }
 }));
 
 // Practice outside the schedule. The rating is logged (review_mode 'practice') but the card keeps

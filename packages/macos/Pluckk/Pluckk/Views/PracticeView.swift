@@ -378,6 +378,30 @@ final class PracticeSession: ObservableObject {
     /// The rating a range or a module suggests; Space or Return keeps it.
     var suggestedRating: ReviewRating? { outcome?.rating ?? moduleResponse?.rating }
 
+    /// A written answer and what the checker made of it.
+    @Published private(set) var written: (text: String, grade: PluckkAPI.WrittenGrade?)?
+
+    func checkWritten(_ text: String, for item: ReviewItem) {
+        guard current?.id == item.id, !revealed, !busy, let token = AuthManager.shared.accessToken else { return }
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        busy = true
+        notice = nil
+        Task {
+            defer { busy = false }
+            do {
+                let grade = try await PluckkAPI.shared.gradeWritten(token: token, cardId: item.card_id, response: answer)
+                guard current?.id == item.id else { return }
+                written = (answer, grade)
+                moduleResponded(ModuleResponse(score: grade.score, summary: grade.feedback.isEmpty ? nil : grade.feedback), for: item)
+            } catch {
+                guard current?.id == item.id else { return }
+                written = (answer, nil)
+                notice = "Couldn't check it (\(error.localizedDescription)), so rate it yourself."
+                withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+            }
+        }
+    }
+
     /// What was typed into a fill-in-the-blank card, judged blank by blank.
     @Published private(set) var typedResults: [TypedBlanks.Result]?
 
@@ -630,6 +654,7 @@ final class PracticeSession: ObservableObject {
         outcome = nil
         moduleResponse = nil
         typedResults = nil
+        written = nil
         reading = nil
         shownAt = Date()
         if index >= queue.count { phase = .done }
@@ -887,6 +912,11 @@ struct PracticeView: View {
                 }
             }
 
+            if item.isWritten && !session.revealed {
+                WrittenAnswerEntry(busy: session.busy) { session.checkWritten($0, for: item) }
+                    .padding(.top, 4)
+            }
+
             if let blanks = item.typedBlanks, !session.revealed {
                 TypedBlanksEntry(count: blanks.count) { session.checkTyped($0, for: item) }
                     .padding(.top, 4)
@@ -900,6 +930,7 @@ struct PracticeView: View {
             if session.revealed {
                 if let outcome = session.outcome { IntervalReveal(outcome: outcome).padding(.top, 4) }
                 if let typed = session.typedResults { TypedBlanksReveal(results: typed) }
+                if let written = session.written { WrittenAnswerReveal(text: written.text, grade: written.grade) }
                 if let response = session.moduleResponse, let summary = response.summary {
                     Text(summary)
                         .font(.system(size: 13, weight: .medium))
@@ -1212,7 +1243,7 @@ struct PracticeView: View {
                     }
                 }
             }
-        } else if item.respondModule != nil || item.typedBlanks != nil {
+        } else if item.respondModule != nil || item.typedBlanks != nil || item.isWritten {
             Button("Show the answer") { session.reveal() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))

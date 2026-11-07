@@ -60,6 +60,8 @@ export async function buildItems(db: Db, userId: string, dealt: DealtItem[]) {
       question: qa.question,
       answer: qa.answer,
       style: componentStyle(spec),
+      // How the card is answered beyond plain recall: numeric (a range), written (typed out, checked).
+      answer_mode: 'answerType' in spec ? spec.answerType ?? 'text' : 'text',
       folder: r.folder ? snake(r.folder) : null,
       is_new: !stateRow || stateRow.status === 'new',
       review_state: stateRow ? snake(stateRow) : null,

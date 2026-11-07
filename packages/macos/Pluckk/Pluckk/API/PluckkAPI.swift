@@ -323,6 +323,20 @@ class PluckkAPI {
         let unit: String?
     }
 
+    struct WrittenGrade: Decodable, Equatable {
+        let score: Double
+        let covered: [String]
+        let missed: [String]
+        let feedback: String
+    }
+
+    /// A written answer checked against the card's own (which ideas it got across).
+    func gradeWritten(token: String, cardId: String, response: String) async throws -> WrittenGrade {
+        let data = try await send(token: token, method: "POST", path: "/api/v1/review/grade",
+                                  json: ["card_id": cardId, "response": response])
+        return try JSONDecoder().decode(WrittenGrade.self, from: data)
+    }
+
     /// What a number card's range would be rated, without recording it.
     func scoreInterval(token: String, cardId: String, lower: Double, upper: Double) async throws -> IntervalScore {
         let data = try await send(token: token, method: "POST", path: "/api/v1/review/score",
@@ -647,14 +661,20 @@ struct ReviewItem: Decodable, Identifiable {
     /// Answered inside a module (a click on a map…), which suggests the rating.
     var respondModule: ModuleUse? { modules?.respond.flatMap { $0.pageURL == nil ? nil : $0 } }
 
+    /// How the card is answered beyond plain recall: "numeric", "written", or "text".
+    var answer_mode: String?
+
+    /// Answered by writing it out in full; a model checks it against the card's answer.
+    var isWritten: Bool { answer_mode == "written" && !isNumeric && respondModule == nil }
+
     /// A fill-in-the-blank card whose answer gives each blank: answered by typing.
     var typedBlanks: [String]? {
-        guard !isNumeric, respondModule == nil else { return nil }
+        guard !isNumeric, respondModule == nil, !isWritten else { return nil }
         return TypedBlanks.expected(question: question, answer: answer)
     }
 
     /// The card waits for an answer (a range, a module's, typed blanks) before it reveals on Space or a click.
-    var answersFirst: Bool { isNumeric || respondModule != nil || typedBlanks != nil }
+    var answersFirst: Bool { isNumeric || respondModule != nil || typedBlanks != nil || isWritten }
 
     /// The question as shown on a number card: an older "(90% interval)" note gives way to the
     /// range input, which says 95%.
