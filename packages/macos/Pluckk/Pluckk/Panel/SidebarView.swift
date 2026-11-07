@@ -85,6 +85,12 @@ struct SidebarView: View {
                         } else {
                             LoginView()
                         }
+                    case .modules:
+                        if appState.isAuthenticated {
+                            ModulesView()
+                        } else {
+                            LoginView()
+                        }
                     case .statistics:
                         if appState.isAuthenticated {
                             StatisticsView()
@@ -203,6 +209,7 @@ struct NavRail: View {
                 appState.currentView = .generate
             }
             tab(.decks, icon: "pencil", label: "Decks & cards")
+            tab(.modules, icon: "puzzlepiece.extension", label: "Modules")
             tab(.statistics, icon: "chart.pie", label: "Statistics")
             Spacer()
             tab(.settings, icon: "gearshape", label: "Settings")

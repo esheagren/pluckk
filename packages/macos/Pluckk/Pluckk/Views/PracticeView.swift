@@ -536,6 +536,23 @@ final class PracticeSession: ObservableObject {
 
     func cancelEdit() { editing = false }
 
+    /// Fetch a card again after it was edited elsewhere (the editor, the assistant), so the queue
+    /// shows its new modules, answer type and text.
+    func reloadItem(_ cardId: String) async {
+        guard let token = AuthManager.shared.accessToken,
+              let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/review/items",
+                                                          json: ["items": queue.filter { $0.card_id == cardId }.map { ["card_id": $0.card_id, "component_id": $0.component_id] }]),
+              let fresh = try? JSONDecoder().decode(ItemsResponse.self, from: data).items else { return }
+        for item in fresh {
+            for i in queue.indices where queue[i].id == item.id {
+                var updated = item
+                updated.previews = queue[i].previews
+                queue[i] = updated
+            }
+        }
+    }
+    private struct ItemsResponse: Decodable { let items: [ReviewItem] }
+
     func saveEdit(question: String, answer: String, image: CardImageChange, number: CardNumberChange = .keep,
                   newCards: [SplitCard] = [], onCreated: @escaping (SplitCard) -> Void = { _ in }) {
         guard let item = current, editing, !busy, let token = AuthManager.shared.accessToken else { return }
@@ -782,8 +799,7 @@ struct PracticeView: View {
                                     .id(reading.id)
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                             }
-                            ForEach($splitCards) { splitCardEditor($0).id($0.wrappedValue.id) }
-                            if session.editing { addCardButton.id("addCard") }
+                            // Splitting a card into new ones now happens in the editor.
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 4)
@@ -853,7 +869,8 @@ struct PracticeView: View {
     private func card(_ item: ReviewItem) -> some View {
         Group {
             if session.editing {
-                editor
+                CardEditorPane(cardId: item.card_id, onRemoved: { session.cancelEdit() }, onClose: { session.cancelEdit() })
+                    .frame(minHeight: 520)
             } else {
                 cardContent(item)
             }
@@ -1212,6 +1229,8 @@ struct PracticeView: View {
     @ViewBuilder
     private func footer(_ item: ReviewItem) -> some View {
         if session.editing {
+            EmptyView()   // the editor has its own Save
+        } else if false {
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") { session.cancelEdit() }

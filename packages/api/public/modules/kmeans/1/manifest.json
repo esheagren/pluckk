@@ -1,17 +1,46 @@
 {
   "id": "kmeans",
   "version": "1.0.0",
-  "slots": ["prompt", "reveal"],
+  "slots": [
+    "prompt",
+    "reveal"
+  ],
   "describe": "Steps through k-means on a small made-up 2-D dataset: the unlabelled data, the starting centroids, then alternating assign steps (points take the nearest centroid's colour; the plane is shaded by territory) and update steps (centroids slide to their cluster's mean, with the total squared distance before and after), until nothing changes. Back / Next / Play controls. Deterministic for a given seed.",
   "props": {
     "type": "object",
     "properties": {
-      "k": { "type": "integer", "minimum": 2, "maximum": 6, "default": 3 },
-      "points": { "type": "integer", "minimum": 10, "maximum": 300, "default": 60 },
-      "seed": { "type": "integer", "default": 4 },
-      "init": { "enum": ["random", "kmeans++"], "default": "random" },
-      "height": { "type": "number", "default": 300 },
-      "autoplay": { "type": "boolean", "default": false }
+      "k": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 6,
+        "default": 3
+      },
+      "points": {
+        "type": "integer",
+        "minimum": 10,
+        "maximum": 300,
+        "default": 60
+      },
+      "seed": {
+        "type": "integer",
+        "default": 4
+      },
+      "init": {
+        "enum": [
+          "random",
+          "kmeans++"
+        ],
+        "default": "random"
+      },
+      "height": {
+        "type": "number",
+        "default": 300
+      },
+      "autoplay": {
+        "type": "boolean",
+        "default": false
+      }
     }
-  }
+  },
+  "title": "k-means, step by step"
 }

@@ -773,6 +773,24 @@ router.on('GET', 'modules', authed(async (req, res, user) => {
   res.status(200).json({ modules: [...builtIn, ...own], user_module_base: `/um/${user.id}` });
 }));
 
+// Which cards use which module: { usage: { "<use>": [{ id, question, deck }] } }.
+router.on('GET', 'modules/usage', authed(async (_req, res, user) => {
+  const r = await getDb().execute(sql`
+    select c.id, c.question, f.name as deck, c.spec->'modules' as modules
+    from cards c left join folders f on f.id = c.folder_id
+    where c.user_id = ${user.id} and c.is_deleted = false and c.spec ? 'modules' and jsonb_typeof(c.spec->'modules') = 'object'`);
+  const usage: Record<string, Array<{ id: string; question: string; deck: string | null; slot: string }>> = {};
+  for (const row of r.rows as Array<{ id: string; question: string; deck: string | null; modules: Record<string, unknown> }>) {
+    for (const [slot, value] of Object.entries(row.modules ?? {})) {
+      for (const m of (Array.isArray(value) ? value : value ? [value] : []) as Array<{ use?: string }>) {
+        if (!m?.use) continue;
+        (usage[m.use] ??= []).push({ id: row.id, question: row.question, deck: row.deck, slot });
+      }
+    }
+  }
+  res.status(200).json({ usage });
+}));
+
 router.on('GET', 'modules/mine/:slug', authed(async (_req, res, user, { slug }) => {
   if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
   const e = (await myModules(user.id)).get(slug);

@@ -24,6 +24,7 @@ enum PanelView {
     case practice
     case newCard
     case decks
+    case modules
     case statistics
     case terminal
     case settings
@@ -46,6 +47,10 @@ class AppState: ObservableObject {
     @Published var currentView: PanelView = .generate
     /// The deck open on the Decks page (set from Statistics too); nil shows the first.
     @Published var openDeckId: String?
+    /// The card open in an editor (Decks, Practice or Modules), so the assistant knows what "this card" is.
+    @Published var editingCardId: String?
+    /// The module open on the Modules page.
+    @Published var openModuleUse: String?
 
     // Content capture
     @Published var capturedContent: CapturedContent?

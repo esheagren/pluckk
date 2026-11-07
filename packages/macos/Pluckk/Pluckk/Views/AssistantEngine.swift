@@ -164,8 +164,11 @@ enum AssistantTools {
                                  "slots": ["type": "array", "items": ["type": "string", "enum": ["prompt", "respond", "reveal"]]] as [String: Any],
                                  "props_schema": ["type": "object", "description": "JSON Schema for its props."] as [String: Any],
                                  "sample_props": ["type": "object", "description": "Props to test it with."] as [String: Any],
-                                 "sample_slot": string("Which slot to test in; defaults to the first.")],
+                                 "sample_slot": string("Which slot to test in; defaults to the first."),
+                                 "title": string("A short name people see, e.g. \"Click on the skeleton\".")],
                                 required: ["slug", "html", "describe", "slots"])),
+        ToolSpec(name: "list_module_cards", description: "The cards that use each module (or one module, given use): id, question, deck and slot. Use it to see which cards a module ties together before changing it, and to find related cards that could share one.",
+                 schema: object(["use": string])),
         ToolSpec(name: "publish_module", description: "Publish the draft of one of Erik's modules as its next version, so cards can use it as me/<slug>@<n>. Erik is asked to approve first. Cards keep the version they were given; publishing again doesn't change them until set_card_modules moves them on.",
                  schema: object(["slug": string], required: ["slug"])),
         ToolSpec(name: "list_files", description: "List a folder inside the allowed folders.",
@@ -220,6 +223,7 @@ enum AssistantTools {
         case "set_card_modules": return args["clear"] as? Bool == true ? "Removing a card's modules" : "Putting modules on a card"
         case "save_module": return "Writing module \(text("slug")) and testing it"
         case "publish_module": return "Publishing module \(text("slug"))"
+        case "list_module_cards": return "Listing the cards that use " + (text("use").isEmpty ? "each module" : text("use"))
         case "list_files": return "Listing \(text("path"))"
         case "search_files": return "Searching files: \(text("query"))"
         case "read_file": return "Reading \(text("path"))"
@@ -470,6 +474,7 @@ enum AssistantTools {
             let sampleProps = args["sample_props"] as? [String: Any] ?? [:]
             let slot = ModuleSlot(rawValue: text("sample_slot") ?? slots[0]) ?? .reveal
             var manifest: [String: Any] = ["describe": describe, "slots": slots, "samples": [["slot": slot.rawValue, "props": sampleProps]]]
+            if let title = text("title") { manifest["title"] = title }
             if let schema = args["props_schema"] as? [String: Any] { manifest["props"] = schema }
             let data = try await PluckkAPI.shared.raw(token: try token(), method: "POST", path: "/api/v1/modules/mine/\(slug)",
                                                       json: ["html": html, "manifest": manifest])
@@ -480,6 +485,11 @@ enum AssistantTools {
             AssistantSession.shared.showModule(ModuleUse(use: "me/\(slug)@draft", props: props, src: src), slot: slot,
                                                title: "Draft · \(slug) · \(slot.rawValue)")
             return "Saved the draft of \(slug). Test load with the sample props:\n\(report)\nIt's in the panel for Erik to try. Publish with publish_module when it works."
+
+        case "list_module_cards":
+            let usage = (try await json(path: "/modules/usage") as? [String: Any])?["usage"] as? [String: Any] ?? [:]
+            if let use = text("use") { return encode(usage[use] ?? []) }
+            return encode(usage)
 
         case "publish_module":
             guard let slug = text("slug") else { throw Failure(message: "Which module?") }
@@ -735,7 +745,14 @@ final class AssistantSession: ObservableObject {
             guard approved else { return ToolResult(callId: call.id, content: "Erik declined this.", isError: true) }
         }
         do {
-            return ToolResult(callId: call.id, content: try await AssistantTools.run(call.name, args), isError: false)
+            let content = try await AssistantTools.run(call.name, args)
+            // An editor showing this card reloads it; the Practice queue takes the new version.
+            if ["update_card", "set_card_modules", "set_card_image", "set_rework", "move_card", "delete_card"].contains(call.name),
+               let id = (args["id"] as? String)?.lowercased() {
+                NotificationCenter.default.post(name: .pluckkCardChanged, object: id)
+                await PracticeSession.shared.reloadItem(id)
+            }
+            return ToolResult(callId: call.id, content: content, isError: false)
         } catch {
             return ToolResult(callId: call.id, content: error.localizedDescription, isError: true)
         }
@@ -773,10 +790,14 @@ final class AssistantSession: ObservableObject {
             let cards = app.generatedCards.prefix(10).enumerated().map { "\($0 + 1). \($1.question)" }
             if !cards.isEmpty { lines.append("Generated, not yet stored:\n" + cards.joined(separator: "\n")) }
         case .newCard: lines.append("View: New card")
-        case .decks: lines.append("View: Decks")
+        case .decks: lines.append("View: Decks & cards")
+        case .modules: lines.append("View: Modules" + (app.openModuleUse.map { " (open: \($0))" } ?? ""))
         case .statistics: lines.append("View: Statistics")
         case .terminal: lines.append("View: Terminal")
         case .settings: lines.append("View: Settings")
+        }
+        if let editing = app.editingCardId {
+            lines.append("Card open in the editor: \(editing). Unless he says otherwise, \"this card\" means it. Change it with your tools; the editor reloads your changes as you make them.")
         }
         return "<pluckk_state>\n\(lines.joined(separator: "\n"))\n</pluckk_state>"
     }

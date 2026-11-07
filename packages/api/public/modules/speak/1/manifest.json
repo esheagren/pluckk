@@ -1,14 +1,30 @@
 {
   "id": "speak",
   "version": "1.0.0",
-  "slots": ["prompt", "reveal"],
+  "slots": [
+    "prompt",
+    "reveal"
+  ],
   "describe": "Reads `text` aloud in `lang` (BCP-47, default zh-CN) with the device's voices, once when shown unless autoplay is false, and again from its button. `label` is the button text (defaults to text).",
   "props": {
     "type": "object",
-    "required": ["text"],
+    "required": [
+      "text"
+    ],
     "properties": {
-      "text": { "type": "string" }, "lang": { "type": "string" },
-      "label": { "type": "string" }, "autoplay": { "type": "boolean" }
+      "text": {
+        "type": "string"
+      },
+      "lang": {
+        "type": "string"
+      },
+      "label": {
+        "type": "string"
+      },
+      "autoplay": {
+        "type": "boolean"
+      }
     }
-  }
+  },
+  "title": "Read aloud"
 }

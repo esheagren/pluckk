@@ -61,6 +61,8 @@
      }
     }
    },
+   "title": "Map",
+   "respond_title": "Click on a map",
    "samples": [
     {
      "slot": "prompt",
@@ -144,6 +146,7 @@
      }
     }
    },
+   "title": "k-means, step by step",
    "samples": [
     {
      "slot": "reveal",
@@ -194,6 +197,7 @@
      }
     }
    },
+   "title": "Read aloud",
    "samples": [
     {
      "slot": "reveal",
