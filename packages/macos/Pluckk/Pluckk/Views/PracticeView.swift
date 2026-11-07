@@ -869,7 +869,9 @@ struct PracticeView: View {
     private func card(_ item: ReviewItem) -> some View {
         Group {
             if session.editing {
-                CardEditorPane(cardId: item.card_id, onRemoved: { session.cancelEdit() }, onClose: { session.cancelEdit() })
+                CardEditorPane(cardId: item.card_id, onRemoved: { session.cancelEdit() },
+                               deleteOverride: { session.cancelEdit(); session.deleteCurrent() },
+                               onClose: { session.cancelEdit() })
                     .frame(minHeight: 520)
             } else {
                 cardContent(item)

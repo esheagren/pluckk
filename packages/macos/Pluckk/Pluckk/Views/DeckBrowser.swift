@@ -26,6 +26,8 @@ struct DeckBrowserPanel: View {
     @State private var selected: [String] = []
     /// The card open in the editor below the grid.
     @State private var openCard: String?
+    /// The last card deleted here, for Undo.
+    @State private var lastDeleted: (eventId: String, question: String)?
     @Environment(\.colorScheme) private var colorScheme
 
     private static let pageSize = 200
@@ -67,6 +69,14 @@ struct DeckBrowserPanel: View {
             if let notice {
                 Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.error).padding(.horizontal, 16).padding(.bottom, 6)
             }
+            if let last = lastDeleted {
+                HStack(spacing: 10) {
+                    Text("Deleted “\(Self.short(last.question))”").font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
+                    Button("Undo", action: undoDelete).buttonStyle(PillButtonStyle(prominent: false))
+                    Spacer()
+                }
+                .padding(.horizontal, 16).padding(.bottom, 6)
+            }
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     grid
@@ -83,6 +93,9 @@ struct DeckBrowserPanel: View {
                                            cards.removeAll { $0.id == id }
                                            openCard = nil
                                            onChanged()
+                                       },
+                                       onDeleted: { eventId in
+                                           deleted(id, question: cards.first { $0.id == id }?.question ?? "", eventId: eventId)
                                        },
                                        onClose: { openCard = nil })
                             .id(id)
@@ -238,8 +251,29 @@ struct DeckBrowserPanel: View {
 
     private func delete(_ card: LibraryCard) {
         run("Couldn't delete") { token in
-            _ = try await PluckkAPI.shared.deleteCard(token: token, cardId: card.id)
-            cards.removeAll { $0.id == card.id }
+            let eventId = try await PluckkAPI.shared.deleteCard(token: token, cardId: card.id)
+            deleted(card.id, question: card.question, eventId: eventId)
+        }
+    }
+
+    /// A card gone from the deck (from a tile or the editor): out of the grid, with Undo for a while.
+    private func deleted(_ id: String, question: String, eventId: String?) {
+        cards.removeAll { $0.id == id }
+        if openCard == id { openCard = nil }
+        PracticeSession.shared.removeCardExternally(id)
+        onChanged()
+        guard let eventId else { return }
+        let undo = (eventId: eventId, question: question)
+        lastDeleted = undo
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if lastDeleted?.eventId == undo.eventId { lastDeleted = nil } }
+    }
+
+    private func undoDelete() {
+        guard let last = lastDeleted else { return }
+        lastDeleted = nil
+        run("Couldn't undo") { token in
+            _ = try await PluckkAPI.shared.undoReview(token: token, eventId: last.eventId)
+            await reload()
             onChanged()
         }
     }
@@ -286,6 +320,8 @@ private struct CardTile: View {
     @State private var hovering = false
     @State private var editing = false
     @State private var confirmingDelete = false
+    /// The pointer is on the hover buttons: a click there is theirs, not "open the card".
+    @State private var overActions = false
     @State private var q = ""
     @State private var a = ""
     @Environment(\.colorScheme) private var colorScheme
@@ -307,7 +343,7 @@ private struct CardTile: View {
         .simultaneousGesture(TapGesture().onEnded {
             guard !editing else { return }
             let mods = NSEvent.modifierFlags
-            if mods.contains(.command) || mods.contains(.shift) { onPick(mods.contains(.shift)) } else { onOpen() }
+            if mods.contains(.command) || mods.contains(.shift) { onPick(mods.contains(.shift)) } else if !overActions { onOpen() }
         })
     }
 
@@ -340,14 +376,8 @@ private struct CardTile: View {
                 if card.isMarkedForRework { icon("flag.fill", "Marked for rework") }
                 if card.tags?.contains("leech") == true { icon("ladybug", "Leech: you keep forgetting it; rework it") }
                 Spacer()
-                if confirmingDelete {
-                    Text("Delete?").font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("Cancel") { confirmingDelete = false }
-                        .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("Delete") { confirmingDelete = false; onDelete() }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundColor(Color(hex: "e5534b"))
-                } else if hovering {
-                    actions
+                if hovering {
+                    actions.onHover { overActions = $0 }
                 }
             }
         }
@@ -377,8 +407,8 @@ private struct CardTile: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Move to another deck")
-            CardIconButton(systemName: "trash", help: "Delete card", hoverTint: Color(hex: "e5534b")) {
-                confirmingDelete = true
+            CardIconButton(systemName: "trash", help: "Delete card (Undo appears above)", hoverTint: Color(hex: "e5534b")) {
+                onDelete()
             }
         }
     }

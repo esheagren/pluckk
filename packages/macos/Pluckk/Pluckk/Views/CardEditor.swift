@@ -17,8 +17,12 @@ struct CardEditorPane: View {
     var decks: [DeckSummary] = []
     /// Saved: callers update their copy of the card.
     var onSaved: (_ question: String, _ answer: String, _ tags: [String], _ imageURL: String?) -> Void = { _, _, _, _ in }
-    /// Moved to another deck or deleted.
+    /// Moved to another deck (or deleted, when there's no onDeleted).
     var onRemoved: () -> Void = {}
+    /// Deleted: the caller drops it and offers Undo with the event id.
+    var onDeleted: ((String?) -> Void)? = nil
+    /// Replaces the editor's own delete (Practice deletes through its queue, with ← to undo).
+    var deleteOverride: (() -> Void)? = nil
     let onClose: () -> Void
 
     enum Top: String, CaseIterable { case recall = "Recall", words = "Words", number = "Number", interactive = "Interactive" }
@@ -120,13 +124,7 @@ struct CardEditorPane: View {
             CardIconButton(systemName: "plus.square.on.square", help: "Split: add another card made from this one") {
                 splits.append(SplitDraft())
             }
-            if confirmingDelete {
-                Text("Delete?").font(.system(size: 11)).foregroundColor(.secondary)
-                Button("Cancel") { confirmingDelete = false }.buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.secondary)
-                Button("Delete") { delete() }.buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundColor(Color(hex: "e5534b"))
-            } else {
-                CardIconButton(systemName: "trash", help: "Delete card", hoverTint: Color(hex: "e5534b")) { confirmingDelete = true }
-            }
+            CardIconButton(systemName: "trash", help: "Delete card (Undo follows)", hoverTint: Color(hex: "e5534b")) { delete() }
             Spacer()
             if dirty {
                 Button("Revert") { Task { await load() } }.buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
@@ -644,12 +642,13 @@ struct CardEditorPane: View {
     }
 
     private func delete() {
+        if let deleteOverride { deleteOverride(); return }
         guard let token = AuthManager.shared.accessToken else { return }
         Task {
             do {
-                _ = try await PluckkAPI.shared.deleteCard(token: token, cardId: cardId)
+                let eventId = try await PluckkAPI.shared.deleteCard(token: token, cardId: cardId)
                 PracticeSession.shared.removeCardExternally(cardId)
-                onRemoved()
+                if let onDeleted { onDeleted(eventId) } else { onRemoved() }
             } catch { notice = "Couldn't delete: \(error.localizedDescription)" }
         }
     }
