@@ -873,6 +873,22 @@ router.on('GET', 'um/:uid/:slug/:ver/:file', async (_req, res, { uid, slug, ver,
   res.status(200).send(body);
 });
 
+// ---------------------------------------------------------------- media
+// Small files a card or module plays or shows (recorded pronunciations, imported deck media):
+// stored under user-media/<user>/<name>, returned as a public URL.
+router.on('POST', 'media', authed(async (req, res, user) => {
+  const { name, data, mime } = (req.body ?? {}) as { name?: string; data?: string; mime?: string };
+  if (!name || !data || !mime) { res.status(400).json({ error: 'name, data (base64) and mime required' }); return; }
+  if (!/^(audio|image)\//.test(mime)) { res.status(400).json({ error: 'Only audio and images' }); return; }
+  const bytes = Buffer.from(data, 'base64');
+  if (bytes.length > 4_000_000) { res.status(400).json({ error: 'Over 4 MB' }); return; }
+  const safe = name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+  const blob = await put(`user-media/${user.id}/${safe}`, bytes, {
+    access: 'public', contentType: mime, addRandomSuffix: false, allowOverwrite: true, token: process.env.BLOB_READ_WRITE_TOKEN,
+  });
+  res.status(200).json({ url: blob.url });
+}));
+
 // ---------------------------------------------------------------- site passes
 // The Mac app's "Open x.com for 5 minutes" also has to satisfy Erik's Learn Gate extension in
 // Chrome. The app asks for a pass, which is only issued once nothing is due and today's new cards

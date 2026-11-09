@@ -64,6 +64,11 @@
     respond(data, score, summary) {
       toHost({ type: 'response', data, score: Math.max(0, Math.min(1, Number(score) || 0)), summary: summary || null });
     },
+    /** Play an audio file (a recorded pronunciation), through the host when it can. */
+    play(src) {
+      if (capabilities.play) { toHost({ type: 'play', src }); return; }
+      try { new Audio(src).play(); } catch (e) {}
+    },
     speak(text, lang) {
       if (capabilities.speak) { toHost({ type: 'speak', text, lang }); return; }
       if (!('speechSynthesis' in window)) return;

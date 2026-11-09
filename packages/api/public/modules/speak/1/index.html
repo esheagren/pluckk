@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; media-src 'self' https:">
 <style>
   html, body { margin: 0; background: transparent; font: 14px -apple-system, system-ui, sans-serif; }
   body { display: flex; justify-content: center; padding: 2px 0; }
@@ -26,13 +26,15 @@
 </button>
 <script src="../../pluckk-module.js"></script>
 <script>
-  // speak@1 — props: { text, lang = 'zh-CN', label = text, autoplay = true }
-  // In the reveal slot it plays once when the answer shows; the button replays it.
+  // speak@1 — props: { text, lang = 'zh-CN', label = text, autoplay = true, src }
+  // src: a recorded pronunciation (an audio URL), played instead of the device's voice.
+  // Plays once when shown unless autoplay is false; the button replays it.
   const b = document.getElementById('b');
   let props = {};
   function play() {
-    if (!props.text) return;
-    Pluckk.speak(props.text, props.lang || 'zh-CN');
+    if (props.src) { Pluckk.play(props.src); }
+    else if (props.text) { Pluckk.speak(props.text, props.lang || 'zh-CN'); }
+    else return;
     b.classList.add('playing');
     setTimeout(() => b.classList.remove('playing'), 900);
   }

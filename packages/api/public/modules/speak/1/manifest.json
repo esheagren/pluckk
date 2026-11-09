@@ -5,7 +5,7 @@
     "prompt",
     "reveal"
   ],
-  "describe": "Reads `text` aloud in `lang` (BCP-47, default zh-CN) with the device's voices, once when shown unless autoplay is false, and again from its button. `label` is the button text (defaults to text).",
+  "describe": "Reads text aloud: a recorded pronunciation when `src` (an audio URL) is given, otherwise `text` in `lang` (BCP-47, default zh-CN) with the device's voices. Plays once when shown unless autoplay is false; the button replays it. `label` is the button text (defaults to text).",
   "props": {
     "type": "object",
     "required": [
@@ -23,6 +23,10 @@
       },
       "autoplay": {
         "type": "boolean"
+      },
+      "src": {
+        "type": "string",
+        "description": "URL of a recorded pronunciation"
       }
     }
   },

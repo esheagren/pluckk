@@ -413,23 +413,22 @@ struct SourceExcerpt: View {
     enum Tab: String, CaseIterable { case passage = "Passage", book = "In the book", wikipedia = "Wikipedia" }
     @State private var tab = Tab.passage
 
+    @StateObject private var wiki = WikiPick()
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             header
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 360)
             switch tab {
             case .passage: passageView
             case .book: BookEvidenceView(passage: passage, isDark: isDark, textScale: textScale)
-            case .wikipedia: WikipediaPanel(cardId: passage.cardId, query: passage.query ?? passage.selection ?? passage.book.title)
+            case .wikipedia: WikiContent(pick: wiki)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .onChange(of: tab) { t in
+            if t == .wikipedia { wiki.start(cardId: passage.cardId, query: passage.query ?? passage.selection ?? passage.book.title) }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(isDark ? Color(hex: "151412") : Color(hex: "fbf8f2")))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
@@ -457,12 +456,25 @@ struct SourceExcerpt: View {
         }
     }
 
+    /// Everything on one line: the book and chapter, the tabs, and on Wikipedia the article picker.
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(spacing: 8) {
             Image(systemName: "book").font(.system(size: 11)).foregroundColor(.secondary)
             Text(passage.book.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-            Text(passage.chapterTitle).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
-            if let page = passage.page {
+                .layoutPriority(1)
+                .help(passage.book.title + (passage.chapterTitle.isEmpty ? "" : " · " + passage.chapterTitle))
+            if tab != .wikipedia {
+                Text(passage.chapterTitle).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+            }
+            Picker("", selection: $tab) {
+                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            if tab == .wikipedia { WikiControls(pick: wiki) }
+            if let page = passage.page, tab == .passage {
                 Text("p. \(page)")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundColor(PluckkTheme.accent)
@@ -637,61 +649,33 @@ struct BookEvidenceView: View {
 
 // MARK: - Wikipedia beside the book
 
-/// The Wikipedia article for a card, chosen by searching for its question and answer, shown in
-/// the reader. A different article can be picked; the choice is kept for that card.
-struct WikipediaPanel: View {
-    let cardId: String?
-    let query: String
-    @State private var candidates: [String] = []
-    @State private var title: String?
-    @State private var searchText = ""
-    @State private var problem: String?
+/// The Wikipedia article for a card, chosen by searching for its question and answer. A different
+/// article can be picked or searched for; the choice is kept for that card.
+@MainActor
+final class WikiPick: ObservableObject {
+    @Published var title: String?
+    @Published var candidates: [String] = []
+    @Published var problem: String?
+    private var cardId: String?
+    private var started: String?
 
     private var storeKey: String? { cardId.map { "wikipedia.\($0)" } }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Menu {
-                    ForEach(candidates, id: \.self) { t in Button(t) { choose(t) } }
-                } label: {
-                    Text(title ?? "Finding an article…").font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Other articles that match this card")
-                TextField("Search Wikipedia", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .frame(maxWidth: 220)
-                    .onSubmit { Task { await search(searchText, pickFirst: true) } }
-                Spacer()
-                if let title, let url = Self.url(title, mobile: false) {
-                    Button(action: { NSWorkspace.shared.open(url) }) { Image(systemName: "arrow.up.right.square") }
-                        .buttonStyle(.plain).foregroundColor(.secondary).help("Open in the browser")
-                }
-            }
-            if let problem {
-                Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
-            } else if let title, let url = Self.url(title, mobile: true) {
-                WikiWebView(url: url)
-                    .frame(height: 560)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .id(title)
-            }
-        }
-        .task(id: cardId ?? query) {
-            if let key = storeKey, let saved = UserDefaults.standard.string(forKey: key) { title = saved }
-            await search(Self.searchable(query), pickFirst: title == nil)
-        }
+    func start(cardId: String?, query: String) {
+        let key = cardId ?? query
+        guard started != key else { return }
+        started = key
+        self.cardId = cardId
+        title = storeKey.flatMap { UserDefaults.standard.string(forKey: $0) }
+        Task { await search(Self.searchable(query), pickFirst: title == nil) }
     }
 
-    private func choose(_ t: String) {
+    func choose(_ t: String) {
         title = t
         if let key = storeKey { UserDefaults.standard.set(t, forKey: key) }
     }
 
-    private func search(_ text: String, pickFirst: Bool) async {
+    func search(_ text: String, pickFirst: Bool) async {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, var c = URLComponents(string: "https://en.wikipedia.org/w/api.php") else { return }
         c.queryItems = [.init(name: "action", value: "query"), .init(name: "list", value: "search"), .init(name: "srsearch", value: q),
@@ -704,15 +688,15 @@ struct WikipediaPanel: View {
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let found = ((json?["query"] as? [String: Any])?["search"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
             if !found.isEmpty { candidates = found }
-            if pickFirst, let first = found.first { title = first; problem = nil }
+            if pickFirst, let first = found.first { choose(first); problem = nil }
             if found.isEmpty && title == nil { problem = "No Wikipedia article matched. Try the search box." }
         } catch {
             if title == nil { problem = "Couldn't reach Wikipedia." }
         }
     }
 
-    /// Search text from a card: its answer's first line and the question's words, without the
-    /// small words that only dilute a search.
+    /// Search text from a card: its answer and question's words, without the small words that only
+    /// dilute a search.
     static func searchable(_ text: String) -> String {
         let stop: Set<String> = ["what","which","who","why","how","when","where","does","did","do","is","are","was","were","the","a","an","of","in","on","to","for","and","or","as","by","with","that","this","their","his","her","its","it","be","according","about","from","into","than","then","they","them","he","she"]
         let words = text.replacingOccurrences(of: #"[^\p{L}\p{N}\s-]"#, with: " ", options: .regularExpression)
@@ -727,13 +711,70 @@ struct WikipediaPanel: View {
     }
 }
 
+/// The article picker, search and open-in-browser, for the reader's one header line.
+struct WikiControls: View {
+    @ObservedObject var pick: WikiPick
+    @State private var searchText = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(pick.candidates, id: \.self) { t in Button(t) { pick.choose(t) } }
+            } label: {
+                Text(pick.title ?? "Finding an article…").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Other articles that match this card")
+            TextField("Search Wikipedia", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .controlSize(.small)
+                .frame(minWidth: 90, maxWidth: 170)
+                .onSubmit { Task { await pick.search(searchText, pickFirst: true) } }
+            if let title = pick.title, let url = WikiPick.url(title, mobile: false) {
+                Button(action: { NSWorkspace.shared.open(url) }) { Image(systemName: "arrow.up.right.square").font(.system(size: 11)) }
+                    .buttonStyle(.plain).foregroundColor(.secondary).help("Open in the browser")
+            }
+        }
+    }
+}
+
+/// The article itself, tall and stripped of Wikipedia's own header and footer so it reads like a page.
+struct WikiContent: View {
+    @ObservedObject var pick: WikiPick
+
+    var body: some View {
+        if let problem = pick.problem {
+            Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
+        } else if let title = pick.title, let url = WikiPick.url(title, mobile: true) {
+            WikiWebView(url: url)
+                .frame(height: 760)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .id(title)
+        } else {
+            ProgressView().controlSize(.small)
+        }
+    }
+}
+
 private struct WikiWebView: NSViewRepresentable {
     let url: URL
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> ModuleContainer {
-        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let config = WKWebViewConfiguration()
+        let css = """
+        .header-container, .minerva-header, .banner-container, .page-actions-menu, .minerva-footer, footer,
+        .mw-footer, #mw-mf-page-left, .last-modified-bar, .post-content.footer-content, .mw-portlet-associated-pages,
+        .minerva__tab-container, .page-heading .tagline { display: none !important; }
+        body { font-size: 17px !important; }
+        .content, #content { max-width: 760px; margin: 0 auto; }
+        """
+        let js = "var s=document.createElement('style');s.textContent=`\(css)`;document.documentElement.appendChild(s);"
+        config.userContentController.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
         web.load(URLRequest(url: url))
         return ModuleContainer(web)

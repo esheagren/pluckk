@@ -190,7 +190,7 @@ private struct ModuleWebView: NSViewRepresentable {
             if let p = parent.module.props, let data = try? JSONEncoder().encode(p),
                let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) { props = obj }
             post(["type": "init", "slot": parent.slot.rawValue, "props": props, "theme": ModuleWebView.theme(parent.dark),
-                  "revealed": parent.revealed, "capabilities": ["speak": true]])
+                  "revealed": parent.revealed, "capabilities": ["speak": true, "play": true]])
             sentReveal = parent.revealed
         }
 
@@ -215,6 +215,10 @@ private struct ModuleWebView: NSViewRepresentable {
                 responded = true
                 let response = ModuleResponse(score: score, summary: body["summary"] as? String)
                 DispatchQueue.main.async { [weak self] in self?.parent.onResponse?(response) }
+            case "play":
+                if let src = body["src"] as? String, let url = URL(string: src), url.scheme == "https" {
+                    ModuleSpeech.shared.play(url)
+                }
             case "speak":
                 if let text = body["text"] as? String {
                     ModuleSpeech.shared.say(text, lang: body["lang"] as? String ?? "zh-CN")
@@ -266,7 +270,16 @@ final class ModuleSpeech {
         synth.speak(u)
     }
 
-    func stop() { synth.stopSpeaking(at: .immediate) }
+    private var player: AVPlayer?
+
+    /// A recorded pronunciation, from a module's audio URL.
+    func play(_ url: URL) {
+        synth.stopSpeaking(at: .immediate)
+        player = AVPlayer(url: url)
+        player?.play()
+    }
+
+    func stop() { synth.stopSpeaking(at: .immediate); player?.pause() }
 }
 
 // MARK: - Trying a module without a card
@@ -340,7 +353,7 @@ final class ModuleProbe: NSObject, WKNavigationDelegate, WKScriptMessageHandler 
         let theme = ["dark": true, "text": "#f5f5f5", "muted": "#777777", "accent": "#c9a66b", "surface": "#1c1c1e",
                      "rule": "#2e2e30", "success": "#27ae60", "warning": "#e5a14b"] as [String: Any]
         let message: [String: Any] = ["pluckk": ["type": "init", "slot": slot.rawValue, "props": props, "theme": theme,
-                                                 "revealed": slot == .reveal, "capabilities": ["speak": true]]]
+                                                 "revealed": slot == .reveal, "capabilities": ["speak": true, "play": true]]]
         guard let data = try? JSONSerialization.data(withJSONObject: message), let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.postMessage(\(json), '*')")
     }
