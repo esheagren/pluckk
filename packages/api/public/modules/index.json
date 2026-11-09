@@ -1,6 +1,93 @@
 {
  "modules": [
   {
+   "use": "anatomy@1",
+   "owner": "built-in",
+   "id": "anatomy",
+   "version": "1.0.0",
+   "title": "Anatomy figure",
+   "respond_title": "Click on the body",
+   "slots": [
+    "prompt",
+    "respond"
+   ],
+   "describe": "Schematic anatomy figures with named parts: figure is skeleton, muscles, heart, brain or cell. In prompt, `highlight` lights one part up (\"name the highlighted bone\"). In respond, the user clicks a part; `target` is the right one (score 1, else 0) and is shown on reveal. Parts — skeleton: skull, mandible, clavicle, scapula, sternum, ribs, spine, humerus, radius, ulna, hand, pelvis, femur, patella, tibia, fibula, foot; muscles: sternocleidomastoid, trapezius, deltoid, pectoralis, biceps, forearm, abdominis, oblique, quadriceps, adductors, tibialis, calf; heart: svc, ivc, aorta, pulmonary, ra, la, rv, lv; brain: frontal, parietal, occipital, temporal, cerebellum, brainstem; cell: membrane, nucleus, nucleolus, er, golgi, mitochondrion, lysosome, centrosome.",
+   "props": {
+    "type": "object",
+    "required": [
+     "figure"
+    ],
+    "properties": {
+     "figure": {
+      "enum": [
+       "skeleton",
+       "muscles",
+       "heart",
+       "brain",
+       "cell"
+      ],
+      "description": "Which figure"
+     },
+     "highlight": {
+      "type": "string",
+      "description": "Part to light up (prompt)"
+     },
+     "target": {
+      "type": "string",
+      "description": "Part to click (respond)"
+     },
+     "height": {
+      "type": "number",
+      "description": "Height in points (default 340)"
+     }
+    }
+   },
+   "samples": [
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "skeleton",
+      "highlight": "femur"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "muscles",
+      "highlight": "deltoid"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "heart",
+      "highlight": "lv"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "brain",
+      "highlight": "occipital"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "cell",
+      "highlight": "mitochondrion"
+     }
+    },
+    {
+     "slot": "respond",
+     "props": {
+      "figure": "brain",
+      "target": "cerebellum"
+     }
+    }
+   ]
+  },
+  {
    "use": "geo-map@1",
    "owner": "built-in",
    "id": "geo-map",
