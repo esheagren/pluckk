@@ -306,7 +306,7 @@ struct CardEditorPane: View {
             if imageURL == nil && extras.isEmpty {
                 caption("Nothing yet. Add an image, audio, a map or a simulation to show with the question or the answer.")
             }
-            if let imageURL, let url = URL(string: imageURL) { imageRow(url) }
+            if let url = MediaStore.displayURL(imageURL) { imageRow(url) }
             ForEach(extras) { m in attachmentRow(m, placement: true) }
         }
     }
@@ -430,7 +430,7 @@ struct CardEditorPane: View {
         Task {
             do {
                 let stored = try await PluckkAPI.shared.uploadCardImage(token: token, cardId: cardId, imageData: data, mimeType: "image/jpeg")
-                let url = "\(stored)?v=\(Int(Date().timeIntervalSince1970))"
+                let url = stored
                 try await PluckkAPI.shared.setCardImage(token: token, cardId: cardId, url: url)
                 imageURL = url
                 PracticeSession.shared.applyExternalImage(cardId: cardId, url: url)
@@ -552,10 +552,9 @@ struct CardEditorPane: View {
             else if mode == "written" { top = .words; wordsMode = .written }
             else if TypedBlanks.expected(question: question, answer: answer) != nil { top = .words; wordsMode = .blanks; seedBlanksFromFact() }
             else { top = .recall }
-            if catalogue.isEmpty,
-               let listed = try? JSONSerialization.jsonObject(with: try await PluckkAPI.shared.raw(token: token, method: "GET", path: "/api/v1/modules", json: nil)) as? [String: Any] {
-                catalogue = listed["modules"] as? [[String: Any]] ?? []
-                userModuleBase = listed["user_module_base"] as? String
+            if catalogue.isEmpty {
+                catalogue = LocalModules.catalogue()
+                userModuleBase = LocalModules.userBase
             }
             if decks.isEmpty && allDecks.isEmpty { allDecks = (try? await PluckkAPI.shared.reviewDecks(token: token)) ?? [] }
             loaded = true

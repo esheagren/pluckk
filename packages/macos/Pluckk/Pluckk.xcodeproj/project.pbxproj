@@ -15,6 +15,10 @@
 		035 /* SiteGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137 /* SiteGate.swift */; };
 		036 /* CardEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138 /* CardEditor.swift */; };
 		037 /* ModulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139 /* ModulesView.swift */; };
+		038 /* LocalFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 140 /* LocalFiles.swift */; };
+		039 /* OfflineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 141 /* OfflineStore.swift */; };
+		040 /* pluckk-core.js in Resources */ = {isa = PBXBuildFile; fileRef = 142 /* pluckk-core.js */; };
+		041 /* public in Resources */ = {isa = PBXBuildFile; fileRef = 143 /* public */; };
 		029 /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131 /* StatisticsView.swift */; };
 		028 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* AssistantView.swift */; };
 		027 /* AssistantEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129 /* AssistantEngine.swift */; };
@@ -56,6 +60,10 @@
 		137 /* SiteGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteGate.swift; sourceTree = "<group>"; };
 		138 /* CardEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardEditor.swift; sourceTree = "<group>"; };
 		139 /* ModulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModulesView.swift; sourceTree = "<group>"; };
+		140 /* LocalFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFiles.swift; sourceTree = "<group>"; };
+		141 /* OfflineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStore.swift; sourceTree = "<group>"; };
+		142 /* pluckk-core.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "pluckk-core.js"; sourceTree = "<group>"; };
+		143 /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; name = public; path = ../../api/public; sourceTree = SOURCE_ROOT; };
 		131 /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		130 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		129 /* AssistantEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantEngine.swift; sourceTree = "<group>"; };
@@ -197,6 +205,8 @@
 				137 /* SiteGate.swift */,
 				138 /* CardEditor.swift */,
 				139 /* ModulesView.swift */,
+				140 /* LocalFiles.swift */,
+				141 /* OfflineStore.swift */,
 				131 /* StatisticsView.swift */,
 				130 /* AssistantView.swift */,
 				129 /* AssistantEngine.swift */,
@@ -216,6 +226,8 @@
 				116 /* Assets.xcassets */,
 				117 /* Info.plist */,
 				118 /* Pluckk.entitlements */,
+				142 /* pluckk-core.js */,
+				143 /* public */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -285,6 +297,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				016 /* Assets.xcassets in Resources */,
+				040 /* pluckk-core.js in Resources */,
+				041 /* public in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -317,6 +331,8 @@
 				035 /* SiteGate.swift in Sources */,
 				036 /* CardEditor.swift in Sources */,
 				037 /* ModulesView.swift in Sources */,
+				038 /* LocalFiles.swift in Sources */,
+				039 /* OfflineStore.swift in Sources */,
 				029 /* StatisticsView.swift in Sources */,
 				028 /* AssistantView.swift in Sources */,
 				027 /* AssistantEngine.swift in Sources */,

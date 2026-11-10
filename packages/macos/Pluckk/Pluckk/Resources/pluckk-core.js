@@ -341,10 +341,10 @@
 
   // src/offline.ts
   var key2 = (cardId, componentId) => `${cardId}:${componentId}`;
-  function candidates(snap) {
-    const states = new Map(snap.states.map((s) => [key2(s.cardId, s.componentId), s]));
+  function candidates(snap2) {
+    const states = new Map(snap2.states.map((s) => [key2(s.cardId, s.componentId), s]));
     const rows = [];
-    for (const c of snap.cards) {
+    for (const c of snap2.cards) {
       for (const componentId of componentIdsOf(c.spec)) {
         const s = states.get(key2(c.id, componentId));
         rows.push({ cardId: c.id, componentId, folderId: c.folderId, createdAt: c.createdAt, status: s?.status ?? null, dueAt: s?.dueAt ?? null });
@@ -365,14 +365,14 @@
       ...modules.reveal ? { reveal: modules.reveal.map(add) } : {}
     };
   }
-  function offlineItem(snap, cardId, componentId, now) {
-    const card = snap.cards.find((c) => c.id === cardId);
+  function offlineItem(snap2, cardId, componentId, now) {
+    const card = snap2.cards.find((c) => c.id === cardId);
     if (!card) return null;
     const ids = componentIdsOf(card.spec);
     const component = ids.includes(componentId) ? componentId : componentId === MAIN_COMPONENT ? ids[0] : null;
     if (!component) return null;
     const qa = renderComponent(card.spec, component);
-    const stateRow = snap.states.find((s) => s.cardId === cardId && s.componentId === component) ?? null;
+    const stateRow = snap2.states.find((s) => s.cardId === cardId && s.componentId === component) ?? null;
     const state = stateRow ?? defaultScheduler.initial(now);
     const spec = card.spec;
     const simple = spec.style !== "qa_bidirectional" && spec.style !== "cloze_list";
@@ -393,42 +393,42 @@
       numeric_answer: numeric?.value ?? null,
       numeric_unit: numeric?.unit ?? null,
       answer_mode: simple ? spec.answerType ?? "text" : "text",
-      modules: simple && spec.modules ? withSources(spec.modules, snap.userModuleBase) : null,
+      modules: simple && spec.modules ? withSources(spec.modules, snap2.userModuleBase) : null,
       folder: card.folderId ? { id: card.folderId, name: card.folderName } : null,
       is_new: !stateRow || stateRow.status === "new",
       previews: defaultScheduler.preview(state, now)
     };
   }
-  function dealOffline(snap, opts, now = /* @__PURE__ */ new Date()) {
+  function dealOffline(snap2, opts, now = /* @__PURE__ */ new Date()) {
     const result = selectSession({
       mode: opts.mode ?? "scheduled",
-      size: opts.size ?? snap.sessionSize,
+      size: opts.size ?? snap2.sessionSize,
       folderId: opts.folderId,
-      folders: snap.folders,
-      candidates: candidates(snap),
-      newReviewedTodayByFolder: new Map(Object.entries(snap.newToday).map(([k, v]) => [k === "null" ? null : k, v])),
-      defaultNewPerDay: snap.defaultNewPerDay,
+      folders: snap2.folders,
+      candidates: candidates(snap2),
+      newReviewedTodayByFolder: new Map(Object.entries(snap2.newToday).map(([k, v]) => [k === "null" ? null : k, v])),
+      defaultNewPerDay: snap2.defaultNewPerDay,
       now
     });
-    return result.dealt.map((d) => offlineItem(snap, d.cardId, d.componentId, now)).filter((x) => x !== null);
+    return result.dealt.map((d) => offlineItem(snap2, d.cardId, d.componentId, now)).filter((x) => x !== null);
   }
-  function rateOffline(snap, cardId, componentId, rating, now = /* @__PURE__ */ new Date()) {
-    const card = snap.cards.find((c) => c.id === cardId);
+  function rateOffline(snap2, cardId, componentId, rating, now = /* @__PURE__ */ new Date()) {
+    const card = snap2.cards.find((c) => c.id === cardId);
     if (!card) throw new Error("Card not in the offline copy");
-    const i = snap.states.findIndex((s) => s.cardId === cardId && s.componentId === componentId);
-    const before = i >= 0 ? snap.states[i] : null;
+    const i = snap2.states.findIndex((s) => s.cardId === cardId && s.componentId === componentId);
+    const before = i >= 0 ? snap2.states[i] : null;
     const next = defaultScheduler.next(before ?? defaultScheduler.initial(now), rating, now, DEFAULT_MECHANICS);
     const row = { ...next, cardId, componentId };
-    if (i >= 0) snap.states[i] = row;
-    else snap.states.push(row);
+    if (i >= 0) snap2.states[i] = row;
+    else snap2.states.push(row);
     if (!before || before.status === "new") {
       const k = card.folderId ?? "null";
-      snap.newToday[k] = (snap.newToday[k] ?? 0) + 1;
+      snap2.newToday[k] = (snap2.newToday[k] ?? 0) + 1;
     }
     return { state: row, previews: defaultScheduler.preview(row, now) };
   }
-  function offlineToday(snap, now = /* @__PURE__ */ new Date()) {
-    return dealOffline(snap, { mode: "scheduled", size: 1e3 }, now).reduce(
+  function offlineToday(snap2, now = /* @__PURE__ */ new Date()) {
+    return dealOffline(snap2, { mode: "scheduled", size: 1e3 }, now).reduce(
       (acc, item) => {
         if (item.is_new) acc.learn++;
         else acc.review++;
@@ -439,18 +439,24 @@
   }
 
   // src/offline-bundle.ts
+  var snap = null;
+  var need = () => {
+    if (!snap) throw new Error("No offline copy loaded");
+    return snap;
+  };
   var api = {
-    deal(snapshot, opts, now) {
-      return JSON.stringify(dealOffline(JSON.parse(snapshot), JSON.parse(opts), new Date(now)));
+    load(json) {
+      snap = JSON.parse(json);
+      return snap.cards.length;
     },
-    /** Returns { snapshot, state, previews }: the snapshot comes back changed. */
-    rate(snapshot, cardId, componentId, rating, now) {
-      const snap = JSON.parse(snapshot);
-      const r = rateOffline(snap, cardId, componentId, rating, new Date(now));
-      return JSON.stringify({ snapshot: snap, ...r });
+    deal(opts, now) {
+      return JSON.stringify(dealOffline(need(), JSON.parse(opts), new Date(now)));
     },
-    today(snapshot, now) {
-      return JSON.stringify(offlineToday(JSON.parse(snapshot), new Date(now)));
+    rate(cardId, componentId, rating, now) {
+      return JSON.stringify(rateOffline(need(), cardId, componentId, rating, new Date(now)));
+    },
+    today(now) {
+      return JSON.stringify(offlineToday(need(), new Date(now)));
     }
   };
   globalThis.PluckkCore = api;

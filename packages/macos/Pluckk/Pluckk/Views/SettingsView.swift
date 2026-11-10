@@ -184,6 +184,7 @@ struct SettingsView: View {
                 }
 
             Toggle("Push the active window aside when the panel opens", isOn: $pushWindowAside)
+            FilesLocationSetting()
             Text("Off: the panel floats over the app. On: the app's window is resized to make room.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -346,6 +347,41 @@ struct SiteGateSettings: View {
             if let problem = gate.permissionProblem {
                 Text(problem).font(.caption).foregroundColor(PluckkTheme.Dark.warning)
             }
+        }
+    }
+}
+
+
+/// Where card pictures, audio and your own modules live: this Mac, or iCloud Drive so other Macs
+/// signed in to the same iCloud share them. Switching copies the files across first.
+struct FilesLocationSetting: View {
+    @State private var inICloud = UserDefaults.standard.bool(forKey: PluckkFiles.iCloudKey)
+    @State private var problem: String?
+    @State private var moving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Keep pictures, audio and your modules in iCloud Drive", isOn: Binding(
+                get: { inICloud },
+                set: { want in
+                    guard !moving else { return }
+                    moving = true
+                    problem = nil
+                    Task.detached {
+                        let failure: String?
+                        do { try PluckkFiles.moveFiles(toICloud: want); failure = nil }
+                        catch { failure = PluckkFiles.iCloudFolder == nil ? "iCloud Drive is off on this Mac." : error.localizedDescription }
+                        await MainActor.run {
+                            moving = false
+                            problem = failure
+                            inICloud = UserDefaults.standard.bool(forKey: PluckkFiles.iCloudKey)
+                        }
+                    }
+                }))
+                .disabled(moving)
+            Text(moving ? "Copying files…" : problem ?? (inICloud ? "In iCloud Drive › Pluckk, shared with your other Macs." : "On this Mac only, in Application Support › Pluckk."))
+                .font(.caption)
+                .foregroundColor(problem == nil ? .secondary : .red)
         }
     }
 }

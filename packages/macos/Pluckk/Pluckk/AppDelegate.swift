@@ -24,6 +24,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         selectionReader = SelectionReader()
         DeckFiler.shared.start()
         SiteGate.shared.start()
+        // Send ratings made offline last time, then keep this Mac's copy fresh for the next outage.
+        Task { @MainActor in
+            await OfflineStore.shared.flush()
+            await OfflineStore.shared.refreshIfStale()
+        }
 
         // Hide dock icon (we're a menu bar app)
         NSApp.setActivationPolicy(.accessory)

@@ -134,8 +134,13 @@ final class PracticeSession: ObservableObject {
         countsRequest += 1
         let request = countsRequest
         Task {
-            if let counts = try? await PluckkAPI.shared.reviewToday(token: token), request == countsRequest {
-                todayCounts = counts
+            do {
+                let counts = try await PluckkAPI.shared.reviewToday(token: token)
+                if request == countsRequest { todayCounts = counts }
+            } catch {
+                if OfflineStore.isNetworkError(error), request == countsRequest, let counts = OfflineStore.shared.today() {
+                    todayCounts = counts
+                }
             }
         }
     }
@@ -211,6 +216,26 @@ final class PracticeSession: ObservableObject {
 
     func practiceAhead(_ count: Int) { deal(ahead: count) }
 
+    /// Online, the server deals and Pluckk keeps its copy current; when the server can't be
+    /// reached, the copy on this Mac deals instead (scheduled sessions only).
+    private func dealScheduled(token: String, focus: String??, ahead: Int?) async throws -> [ReviewItem] {
+        let offline = OfflineStore.shared
+        if offline.pending > 0 { await offline.flush() }
+        if offline.pending == 0 {
+            do {
+                let items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus, ahead: ahead)
+                offline.cameOnline()
+                return items
+            } catch {
+                guard OfflineStore.isNetworkError(error), offline.hasSnapshot else { throw error }
+            }
+        }
+        offline.wentOffline()
+        guard offline.hasSnapshot else { throw URLError(.notConnectedToInternet) }
+        notice = "Offline: practising from this Mac's copy. Ratings sync when you're back online."
+        return offline.deal(focus: focus, ahead: ahead)
+    }
+
     private func deal(ahead: Int?) {
         guard let token = AuthManager.shared.accessToken else { return }
         phase = .loading
@@ -224,7 +249,7 @@ final class PracticeSession: ObservableObject {
                 if let run {
                     items = try await PluckkAPI.shared.practiceSession(token: token, folderId: run.folderId, cardIds: run.cardIds, filter: run.filter.rawValue)
                 } else {
-                    items = try await PluckkAPI.shared.reviewSession(token: token, focus: focus, ahead: ahead)
+                    items = try await dealScheduled(token: token, focus: focus, ahead: ahead)
                 }
                 queue = items
                 index = 0
@@ -452,10 +477,27 @@ final class PracticeSession: ObservableObject {
         Task {
             defer { busy = false }
             do {
-                let result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed,
-                                                                     interval: outcome.map { ($0.lower, $0.upper) },
-                                                                     practice: practiceRun != nil,
-                                                                     revealMs: revealedAt.map { Int($0.timeIntervalSince(shownAt) * 1000) })
+                let revealMs = revealedAt.map { Int($0.timeIntervalSince(shownAt) * 1000) }
+                let result: PluckkAPI.ReviewResult
+                let offline = OfflineStore.shared
+                if practiceRun == nil, offline.pending > 0 || offline.offline,
+                   let previews = offline.rate(item, rating: rating, responseMs: elapsed, revealMs: revealMs) {
+                    // Already offline (or ratings still waiting): keep them in order in the outbox.
+                    result = PluckkAPI.ReviewResult(event_id: OfflineStore.offlineEventId, previews: previews)
+                    Task { await offline.flush() }
+                } else {
+                    do {
+                        result = try await PluckkAPI.shared.submitReview(token: token, item: item, rating: rating, responseMs: elapsed,
+                                                                         interval: outcome.map { ($0.lower, $0.upper) },
+                                                                         practice: practiceRun != nil, revealMs: revealMs)
+                    } catch {
+                        guard practiceRun == nil, OfflineStore.isNetworkError(error),
+                              let previews = offline.rate(item, rating: rating, responseMs: elapsed, revealMs: revealMs) else { throw error }
+                        offline.wentOffline()
+                        notice = "Offline: this rating is saved on this Mac and will sync when you're back online."
+                        result = PluckkAPI.ReviewResult(event_id: OfflineStore.offlineEventId, previews: previews)
+                    }
+                }
                 remember(.rating(eventId: result.event_id, item: item, index: index, wasAgain: rating == .again))
                 if result.leech == true {
                     notice = "That card has slipped \(result.lapses ?? 4) times, so it's flagged as a leech. Rework it rather than drill it; the assistant can help."
@@ -494,7 +536,9 @@ final class PracticeSession: ObservableObject {
                 switch last {
                 case let .rating(eventId, item, at, wasAgain):
                     var restored = item
-                    if let eventId, let fresh = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) { restored = fresh }
+                    if eventId == OfflineStore.offlineEventId {
+                        OfflineStore.shared.undoLast(cardId: item.card_id)
+                    } else if let eventId, let fresh = try await PluckkAPI.shared.undoReview(token: token, eventId: eventId) { restored = fresh }
                     // An "again" re-queued a copy further on; drop that copy before putting the
                     // card back where it was.
                     if wasAgain, let copy = queue.indices.last(where: { $0 >= at && queue[$0].id == item.id }) {
@@ -619,8 +663,7 @@ final class PracticeSession: ObservableObject {
         case .replace(let image):
             guard let data = cardImageJPEG(image) else { throw APIError.serverError("That image couldn't be read.") }
             let stored = try await PluckkAPI.shared.uploadCardImage(token: token, cardId: item.card_id, imageData: data, mimeType: "image/jpeg")
-            // A new image overwrites the same address; the version stops the old one showing.
-            url = "\(stored)?v=\(Int(Date().timeIntervalSince1970))"
+            url = stored   // a pluckk-media: reference, named by its content
             // Art cards are on the question side by where they're stored, which the new image isn't.
             if item.imageIsQuestion, tags?.contains(ImageSide.questionTag) != true {
                 tags = (tags ?? []) + [ImageSide.questionTag]
@@ -923,7 +966,7 @@ struct PracticeView: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !session.revealed, item.imageIsQuestion, let url = item.image_url.flatMap(URL.init(string:)) {
+            if !session.revealed, item.imageIsQuestion, let url = MediaStore.displayURL(item.image_url) {
                 cardImage(url)
             }
 
@@ -972,7 +1015,7 @@ struct PracticeView: View {
                 ForEach(Array((item.modules?.reveal ?? []).enumerated()), id: \.offset) { _, module in
                     ModuleSlotView(module: module, slot: .reveal, revealed: true)
                 }
-                if let url = item.image_url.flatMap(URL.init(string:)) {
+                if let url = MediaStore.displayURL(item.image_url) {
                     cardImage(url)
                 }
                 if let book = item.bookSource {
@@ -1153,7 +1196,7 @@ struct PracticeView: View {
     }
 
     private var editImageURL: URL? {
-        editImageRemoved ? nil : session.current?.image_url.flatMap(URL.init(string:))
+        editImageRemoved ? nil : MediaStore.displayURL(session.current?.image_url)
     }
 
     /// Replace or remove the card's image. Nothing changes until Save.

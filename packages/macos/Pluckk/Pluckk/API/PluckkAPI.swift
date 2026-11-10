@@ -239,12 +239,13 @@ class PluckkAPI {
     }
 
     @discardableResult
+    /// Keep a card's picture on this Mac (MediaStore) and point the card at it. Returns the
+    /// "pluckk-media:" reference; nothing is uploaded to file storage.
     func uploadCardImage(token: String, cardId: String, imageData: Data, mimeType: String) async throws -> String {
-        let data = try await send(token: token, method: "POST", path: "/api/v1/images", json: [
-            "card_id": cardId, "image_data": imageData.base64EncodedString(), "mime_type": mimeType,
-        ])
-        struct Uploaded: Decodable { let image_url: String }
-        return try JSONDecoder().decode(Uploaded.self, from: data).image_url
+        let ext = mimeType.contains("png") ? "png" : mimeType.contains("gif") ? "gif" : "jpg"
+        let ref = try MediaStore.add(imageData, ext: ext)
+        try await setCardImage(token: token, cardId: cardId, url: ref)
+        return ref
     }
 
     /// Point a card at an image, or remove it with nil. `tags` replaces the card's tags if given.

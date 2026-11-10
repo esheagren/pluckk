@@ -42,10 +42,11 @@ struct ModuleUse: Decodable, Equatable {
     /// "/um/<user>/<slug>/<n>/index.html" for his own modules).
     var src: String? = nil
 
-    /// The page's full address on the API's own server.
+    /// The page's address inside the app (pluckk-app://), which serves built-in modules from the
+    /// app bundle and his own from this Mac, so modules work offline.
     var pageURL: URL? {
-        if let src, src.hasPrefix("/modules/") || src.hasPrefix("/um/") { return URL(string: "\(Config.backendURL)\(src)") }
-        return path.flatMap { URL(string: "\(Config.backendURL)/modules/\($0)/index.html") }
+        if let src, src.hasPrefix("/modules/") || src.hasPrefix("/um/") { return AppSchemeHandler.pageURL(for: src) }
+        return path.flatMap { AppSchemeHandler.pageURL(for: "/modules/\($0)/index.html") }
     }
 
     /// "geo-map@1" → "geo-map/1", the module's folder under /modules.
@@ -108,6 +109,7 @@ private struct ModuleWebView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         // The handler is held weakly through a proxy: WKUserContentController keeps a strong one.
         config.userContentController.add(WeakHandler(context.coordinator), name: "pluckk")
+        config.setURLSchemeHandler(AppSchemeHandler.shared, forURLScheme: AppSchemeHandler.scheme)
         let web = WKWebView(frame: .zero, configuration: config)
         web.setValue(false, forKey: "drawsBackground")
         web.navigationDelegate = context.coordinator
@@ -198,7 +200,8 @@ private struct ModuleWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             let ours = URL(string: Config.backendURL)?.host
-            if action.targetFrame?.isMainFrame == false || action.request.url?.host == ours { decisionHandler(.allow) }
+            if action.targetFrame?.isMainFrame == false || action.request.url?.host == ours
+                || action.request.url?.scheme == AppSchemeHandler.scheme { decisionHandler(.allow) }
             else { decisionHandler(.cancel) }
         }
 
@@ -216,7 +219,7 @@ private struct ModuleWebView: NSViewRepresentable {
                 let response = ModuleResponse(score: score, summary: body["summary"] as? String)
                 DispatchQueue.main.async { [weak self] in self?.parent.onResponse?(response) }
             case "play":
-                if let src = body["src"] as? String, let url = URL(string: src), url.scheme == "https" {
+                if let src = body["src"] as? String, let url = MediaStore.displayURL(src), url.scheme == "https" || url.isFileURL {
                     ModuleSpeech.shared.play(url)
                 }
             case "speak":
@@ -323,6 +326,7 @@ final class ModuleProbe: NSObject, WKNavigationDelegate, WKScriptMessageHandler 
         config.userContentController.addUserScript(WKUserScript(source: watch, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "probe")
         config.userContentController.add(self, name: "pluckk")
+        config.setURLSchemeHandler(AppSchemeHandler.shared, forURLScheme: AppSchemeHandler.scheme)
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 560, height: 600), configuration: config)
         web.navigationDelegate = self
         let window = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: 560, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)

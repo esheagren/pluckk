@@ -248,9 +248,9 @@ enum AssistantTools {
             return ("Write this file?", (try? files.writePreview(path, content: content)) ?? path)
         case "publish_module":
             let slug = args["slug"] as? String ?? ""
-            let module = (try? await json(path: "/modules/mine/\(slug)")) as? [String: Any]
-            let describe = ((module?["manifest"] as? [String: Any])?["describe"] as? String) ?? ""
-            let next = ((module?["versions"] as? [Int])?.max() ?? 0) + 1
+            let info = LocalModules.all().first { $0.slug == slug }
+            let describe = (LocalModules.manifest(slug, "draft")?["describe"] as? String) ?? ""
+            let next = (info?.versions.max() ?? 0) + 1
             return ("Publish module \(slug) as version \(next)?", "Cards can then use me/\(slug)@\(next). Try it in the preview above first.\n\n\(describe)")
         default:
             return nil
@@ -400,7 +400,7 @@ enum AssistantTools {
                   let data = cardImageJPEG(image) else { throw Failure(message: "There's no image with that id. Make one with code first.") }
             let stored = try await PluckkAPI.shared.uploadCardImage(token: try token(), cardId: id, imageData: data, mimeType: "image/jpeg")
             // A new image overwrites the same address; the version stops the old one showing.
-            let url = "\(stored)?v=\(Int(Date().timeIntervalSince1970))"
+            let url = stored   // a pluckk-media: reference, named by its content
             try await PluckkAPI.shared.setCardImage(token: try token(), cardId: id, url: url)
             cardCache = nil
             PracticeSession.shared.applyExternalImage(cardId: id, url: url)
@@ -434,8 +434,7 @@ enum AssistantTools {
             return "Deleted card \(id)."
 
         case "list_modules":
-            let result = try await json(path: "/modules") as? [String: Any]
-            let modules = (result?["modules"] as? [[String: Any]] ?? []).map { m -> [String: Any] in
+            let modules = LocalModules.catalogue().map { m -> [String: Any] in
                 var out = m
                 for key in ["version", "id"] { out[key] = nil }
                 return out
@@ -444,19 +443,22 @@ enum AssistantTools {
 
         case "get_module":
             if let use = text("use"), !use.hasPrefix("me/") {
-                let all = (try await json(path: "/modules") as? [String: Any])?["modules"] as? [[String: Any]] ?? []
+                let all = LocalModules.catalogue()
                 guard var m = all.first(where: { $0["use"] as? String == use }),
                       let parts = Optional(use.split(separator: "@")), parts.count == 2,
-                      let url = URL(string: "\(Config.backendURL)/modules/\(parts[0])/\(parts[1])/index.html")
+                      let file = AppSchemeHandler.bundled("modules/\(parts[0])/\(parts[1])/index.html"),
+                      let html = try? String(contentsOf: file, encoding: .utf8)
                 else { throw Failure(message: "There's no built-in module \(use). list_modules shows them.") }
-                let (data, _) = try await URLSession.shared.data(from: url)
-                m["html"] = String(decoding: data, as: UTF8.self)
+                m["html"] = html
                 m["runtime"] = "Pages include /modules/pluckk-module.js (and /modules/pluckk-stepper.js for step-through simulations)."
                 return encode(m)
             }
             let slug = text("slug") ?? text("use").map { String($0.dropFirst(3).split(separator: "@").first ?? "") }
             guard let slug, !slug.isEmpty else { throw Failure(message: "Give use or slug.") }
-            return encode(try await json(path: "/modules/mine/\(slug)"))
+            guard let info = LocalModules.all().first(where: { $0.slug == slug }) else { throw Failure(message: "No module called \(slug).") }
+            let version = info.draft ? "draft" : String(info.versions.max() ?? 0)
+            return encode(["slug": slug, "showing": version, "versions": info.versions, "has_draft": info.draft,
+                           "manifest": LocalModules.manifest(slug, version) ?? [:], "html": LocalModules.read(slug, version, "index.html") ?? ""] as [String: Any])
 
         case "set_card_modules":
             let id = try cardId()
@@ -476,10 +478,12 @@ enum AssistantTools {
             var manifest: [String: Any] = ["describe": describe, "slots": slots, "samples": [["slot": slot.rawValue, "props": sampleProps]]]
             if let title = text("title") { manifest["title"] = title }
             if let schema = args["props_schema"] as? [String: Any] { manifest["props"] = schema }
-            let data = try await PluckkAPI.shared.raw(token: try token(), method: "POST", path: "/api/v1/modules/mine/\(slug)",
-                                                      json: ["html": html, "manifest": manifest])
-            guard let saved = try JSONSerialization.jsonObject(with: data) as? [String: Any], let src = saved["src"] as? String,
-                  let url = URL(string: "\(Config.backendURL)\(src)") else { throw Failure(message: "The server didn't say where the draft is.") }
+            guard slug.range(of: #"^[a-z0-9][a-z0-9-]{1,39}$"#, options: .regularExpression) != nil else {
+                throw Failure(message: "Module names are 2–40 lowercase letters, digits and dashes.")
+            }
+            try LocalModules.saveDraft(slug: slug, html: html, manifest: manifest)
+            let src = "\(LocalModules.userBase)/\(slug)/draft/index.html"
+            guard let url = AppSchemeHandler.pageURL(for: src) else { throw Failure(message: "Couldn't address the draft.") }
             let report = await ModuleProbe.run(url: url, slot: slot, props: sampleProps)
             let props = (try? JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: sampleProps))) ?? .object([:])
             AssistantSession.shared.showModule(ModuleUse(use: "me/\(slug)@draft", props: props, src: src), slot: slot,
@@ -493,9 +497,8 @@ enum AssistantTools {
 
         case "publish_module":
             guard let slug = text("slug") else { throw Failure(message: "Which module?") }
-            let data = try await PluckkAPI.shared.raw(token: try token(), method: "POST", path: "/api/v1/modules/mine/\(slug)/publish", json: [:])
-            let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            return "Published. Cards can use \(result?["use"] as? String ?? "me/\(slug)")."
+            let version = try LocalModules.publish(slug: slug)
+            return "Published. Cards can use me/\(slug)@\(version)."
 
         case "list_files":
             return try files.list(text("path") ?? ".")

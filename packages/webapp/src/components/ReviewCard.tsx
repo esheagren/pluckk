@@ -21,6 +21,13 @@ function imageIsQuestion(url: string | null | undefined, tags: string[] | null |
   return !!url && (url.includes('/anki-media/') || !!tags?.includes('image-on-question'));
 }
 
+
+/** Pictures added in the Mac app live on that Mac ("pluckk-media:<hash>"); the web can't show them. */
+const isMacOnly = (url?: string | null) => !!url && url.startsWith('pluckk-media:');
+const MacOnlyPicture = () => (
+  <div className="mt-2 text-xs text-gray-400 dark:text-gray-500 italic">Picture is in the Pluckk Mac app</div>
+);
+
 export default function ReviewCard({
   card,
   isFlipped,
@@ -190,7 +197,8 @@ export default function ReviewCard({
             </div>
             {/* Image on the front only for imported image-question decks (e.g. art), where
                 the picture IS the question; otherwise it would give the answer away. */}
-            {imageIsQuestion(card.image_url, card.tags) && (
+            {imageIsQuestion(card.image_url, card.tags) && isMacOnly(card.image_url) && <MacOnlyPicture />}
+            {imageIsQuestion(card.image_url, card.tags) && !isMacOnly(card.image_url) && (
               <img
                 src={card.image_url}
                 alt=""
@@ -401,7 +409,8 @@ export default function ReviewCard({
                 {displayAnswer}
               </div>
             )}
-            {card.image_url && (
+            {isMacOnly(card.image_url) && <MacOnlyPicture />}
+            {card.image_url && !isMacOnly(card.image_url) && (
               <img
                 src={card.image_url}
                 alt=""
@@ -429,7 +438,7 @@ export default function ReviewCard({
       </div>
 
       {/* Image Lightbox */}
-      {isImageExpanded && card.image_url && (
+      {isImageExpanded && card.image_url && !isMacOnly(card.image_url) && (
         <div
           className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 cursor-zoom-out"
           onClick={() => setIsImageExpanded(false)}

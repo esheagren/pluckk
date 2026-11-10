@@ -164,9 +164,8 @@ struct ModulesView: View {
     private func load() async {
         guard let token = AuthManager.shared.accessToken else { return }
         do {
-            let listed = try JSONSerialization.jsonObject(with: try await PluckkAPI.shared.raw(token: token, method: "GET", path: "/api/v1/modules", json: nil)) as? [String: Any]
-            modules = listed?["modules"] as? [[String: Any]] ?? []
-            userModuleBase = listed?["user_module_base"] as? String
+            modules = LocalModules.catalogue()
+            userModuleBase = LocalModules.userBase
             let used = try JSONSerialization.jsonObject(with: try await PluckkAPI.shared.raw(token: token, method: "GET", path: "/api/v1/modules/usage", json: nil)) as? [String: Any]
             usage = used?["usage"] as? [String: [[String: Any]]] ?? [:]
             // Most-used first, so the modules that tie the most cards together lead.
