@@ -3,21 +3,45 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pluckk's engine: card entities, the event diary, the reducer, the scheduler, the session queue, and the API schemas. Pure TypeScript, no I/O — imported by the API, the webapp and the extension. Built to dist/ so Node (Vercel functions) can load it; run `npm run build:core` after changing it.",
+  "description": "Pluckk's engine: card entities, the event diary, the reducer, the scheduler, the session queue, and the API schemas. Pure TypeScript, no I/O \u2014 imported by the API, the webapp and the extension. Built to dist/ so Node (Vercel functions) can load it; run `npm run build:core` after changing it.",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./entities": { "types": "./dist/entities.d.ts", "import": "./dist/entities.js" },
-    "./events": { "types": "./dist/events.d.ts", "import": "./dist/events.js" },
-    "./reducer": { "types": "./dist/reducer.d.ts", "import": "./dist/reducer.js" },
-    "./scheduler": { "types": "./dist/scheduler/index.d.ts", "import": "./dist/scheduler/index.js" },
-    "./queue": { "types": "./dist/queue.d.ts", "import": "./dist/queue.js" },
-    "./api": { "types": "./dist/api.d.ts", "import": "./dist/api.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./entities": {
+      "types": "./dist/entities.d.ts",
+      "import": "./dist/entities.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "import": "./dist/events.js"
+    },
+    "./reducer": {
+      "types": "./dist/reducer.d.ts",
+      "import": "./dist/reducer.js"
+    },
+    "./scheduler": {
+      "types": "./dist/scheduler/index.d.ts",
+      "import": "./dist/scheduler/index.js"
+    },
+    "./queue": {
+      "types": "./dist/queue.d.ts",
+      "import": "./dist/queue.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
+    }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bundle:mac": "esbuild src/offline-bundle.ts --bundle --format=iife --platform=neutral --target=es2020 --outfile=../macos/Pluckk/Pluckk/Resources/pluckk-core.js"
   },
   "dependencies": {
     "zod": "^3.24.1"

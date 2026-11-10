@@ -270,8 +270,15 @@ router.on('POST', 'review', authed(async (req, res, user) => {
     res.status(200).json(await practiseCard(db, user.id, body.card_id, body.component_id ?? MAIN_COMPONENT, rating, body.response_time_ms ?? null));
     return;
   }
+  // A rating made offline carries its own time: no later than now, and within the last 60 days.
+  let at: string | null = null;
+  if (body.at) {
+    const t = new Date(body.at).getTime();
+    if (!(t <= Date.now() + 5 * 60000 && t >= Date.now() - 60 * 86400000)) { res.status(400).json({ error: 'at must be within the last 60 days' }); return; }
+    at = new Date(Math.min(t, Date.now())).toISOString();
+  }
   const r = await reviewCard(db, user.id, body.card_id, rating, {
-    componentId: body.component_id ?? MAIN_COMPONENT, sessionId: body.session_id ?? null, responseMs: body.response_time_ms ?? null,
+    componentId: body.component_id ?? MAIN_COMPONENT, sessionId: body.session_id ?? null, responseMs: body.response_time_ms ?? null, at,
   });
   await db.insert(schema.reviewLogs).values({
     cardReviewStateId: r.state.id, userId: user.id, cardId: body.card_id, reviewMode: outcome ? 'numeric_interval' : 'standard', rating,
@@ -425,6 +432,48 @@ router.on('GET', 'stats/learning', authed(async (_req, res, user) => {
     contained: x.contained_answer == null ? null : Boolean(x.contained_answer),
   }));
   res.status(200).json(learningStats(rows));
+}));
+
+// Everything the Mac app needs to practise offline (core/offline.ts): cards, their review states,
+// today's deck limits (caps applied) and new-card counts. Cards come in pages (?offset=&limit=);
+// the first page also carries the rest. Provenance is trimmed to what practice shows.
+router.on('GET', 'sync/snapshot', authed(async (req, res, user) => {
+  const db = getDb();
+  const offset = Math.max(0, Number(req.query?.offset) || 0);
+  const limit = Math.max(1, Math.min(3000, Number(req.query?.limit) || 2000));
+  const rows = await db.select({ card: schema.cards, folder: schema.folders }).from(schema.cards)
+    .leftJoin(schema.folders, eq(schema.cards.folderId, schema.folders.id))
+    .where(and(eq(schema.cards.userId, user.id), eq(schema.cards.isDeleted, false)))
+    .orderBy(schema.cards.createdAt, schema.cards.id)
+    .limit(limit).offset(offset);
+  const cards = rows.map(({ card, folder }) => {
+    const p = (card.provenance ?? null) as Record<string, unknown> | null;
+    return {
+      id: card.id, folderId: card.folderId, folderName: folder?.name ?? null, createdAt: isoTimestamp(card.createdAt),
+      spec: specOf(card), tags: card.tags ?? [], imageUrl: card.imageUrl, sourceUrl: card.sourceUrl,
+      provenance: p ? { identifier: p.identifier ?? null, title: p.title ?? null, container_title: p.containerTitle ?? null, selection: p.selection ?? null } : null,
+    };
+  });
+  if (offset > 0) { res.status(200).json({ cards, offset, limit }); return; }
+  const [{ n }] = (await db.execute(sql`select count(*)::int as n from cards where user_id = ${user.id} and is_deleted = false`)).rows as Array<{ n: number }>;
+  const states = (await db.select().from(schema.cardReviewState).where(eq(schema.cardReviewState.userId, user.id)))
+    .map((s) => ({ cardId: s.cardId, componentId: s.componentId, ...stateFromRow(s) }));
+  const settings = await getStudySettings(user.id);
+  const { folderRows, newToday } = await mixerContext(user.id);
+  const names = new Map((await db.select({ id: schema.folders.id, name: schema.folders.name }).from(schema.folders)
+    .where(eq(schema.folders.userId, user.id))).map((f) => [f.id, f.name]));
+  res.status(200).json({
+    total_cards: n, offset, limit, cards,
+    snapshot: {
+      takenAt: new Date().toISOString(),
+      states,
+      folders: folderRows.map((f) => ({ ...f, name: names.get(f.id) ?? null })),
+      newToday: Object.fromEntries([...newToday.entries()].map(([k, v]) => [k ?? 'null', v])),
+      defaultNewPerDay: settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY,
+      sessionSize: settings.sessionSize ?? DEFAULT_SESSION_SIZE,
+      userModuleBase: `/um/${user.id}`,
+    },
+  });
 }));
 
 // The coming workload, day by day: reviews of cards seen before today, reviews of cards still to

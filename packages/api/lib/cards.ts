@@ -256,7 +256,7 @@ export interface ReviewResult {
 
 export async function reviewCard(
   db: Db, userId: string, cardId: string, rating: Rating,
-  opts: { componentId?: string; sessionId?: string | null; responseMs?: number | null } = {},
+  opts: { componentId?: string; sessionId?: string | null; responseMs?: number | null; at?: string | null } = {},
 ): Promise<ReviewResult> {
   const row = await getCardRow(db, userId, cardId);
   await ensureDiary(db, row);
@@ -277,6 +277,7 @@ export async function reviewCard(
 
   const { card, events } = await commit(db, [{
     type: 'card.review', userId, cardId, componentId, rating, sessionId: opts.sessionId ?? null, responseMs: opts.responseMs ?? null,
+    ...(opts.at ? { at: opts.at } : {}),
     mechanics: defaultScheduler.mechanics,
   }]);
   if (!card) throw new CardError(500, 'Card vanished during review');

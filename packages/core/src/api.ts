@@ -133,6 +133,8 @@ export const reviewSubmitBodySchema = z.object({
   response_time_ms: z.number().int().nonnegative().nullish(),
   // Time from the card appearing to the answer being revealed: how long retrieval took.
   reveal_ms: z.number().int().nonnegative().nullish(),
+  // When the rating happened, for one made offline and sent later (ISO). Omitted means now.
+  at: z.string().datetime({ offset: true }).nullish(),
   // Off-schedule practice: logged, but due dates stay put (an "again" brings the card back tomorrow).
   practice: z.boolean().optional(),
   algorithm_version: z.string().nullish(),
