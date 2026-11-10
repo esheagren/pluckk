@@ -743,21 +743,53 @@ async function fetchText(url: string): Promise<string | null> {
   return r.ok ? r.text() : null;
 }
 
+// Reading a public blob by its address is a cheap read; list() is a metered "advanced operation"
+// on Vercel Blob, and calling it on every request got the account's stores suspended. So files are
+// read by address, and each user's modules are kept in a small index written only on save,
+// publish and delete.
+function blobBase(): string | null {
+  const m = /vercel_blob_rw_([A-Za-z0-9]+)_/.exec(process.env.BLOB_READ_WRITE_TOKEN ?? '');
+  return m ? `https://${m[1].toLowerCase()}.public.blob.vercel-storage.com` : null;
+}
+const blobUrl = (pathname: string) => `${blobBase()}/${pathname}`;
+
+type ModuleIndex = Record<string, { versions: number[]; draft: boolean }>;
+const indexPath = (userId: string) => `${modulePrefix(userId)}index.json`;
+
+async function readIndex(userId: string): Promise<ModuleIndex> {
+  const text = await fetchText(`${blobUrl(indexPath(userId))}?v=${Date.now()}`);
+  if (text) { try { return JSON.parse(text) as ModuleIndex; } catch { /* rebuilt below */ } }
+  // No index yet (modules saved before it existed): build it once from a listing.
+  const index: ModuleIndex = {};
+  for (const f of await moduleFiles(userId)) {
+    const [, , slug, ver, name] = f.pathname.split('/');
+    if (!slug || !ver || name !== 'index.html') continue;
+    const e = index[slug] ??= { versions: [], draft: false };
+    if (ver === 'draft') e.draft = true; else if (/^\d+$/.test(ver)) e.versions.push(Number(ver));
+  }
+  await writeIndex(userId, index);
+  return index;
+}
+
+async function writeIndex(userId: string, index: ModuleIndex) {
+  await put(indexPath(userId), JSON.stringify(index), {
+    access: 'public', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true,
+    token: blobToken(), cacheControlMaxAge: 0,
+  });
+}
+
 /** The user's modules: slug → versions, whether there's a draft, and the newest manifest. */
 async function myModules(userId: string) {
-  const files = await moduleFiles(userId);
+  const index = await readIndex(userId);
   const by = new Map<string, { versions: number[]; draft: boolean; manifestUrl?: string; best: number }>();
-  for (const f of files) {
-    const [, , slug, ver, name] = f.pathname.split('/');
-    if (!slug || !ver) continue;
-    const e = by.get(slug) ?? { versions: [], draft: false, best: -1 };
-    const n = ver === 'draft' ? 0 : Number(ver);
-    if (name === 'index.html') { if (ver === 'draft') e.draft = true; else if (Number.isInteger(n)) e.versions.push(n); }
-    if (name === 'manifest.json' && n >= e.best) { e.best = n; e.manifestUrl = f.url; }
-    by.set(slug, e);
+  for (const [slug, e] of Object.entries(index)) {
+    const best = e.versions.length ? Math.max(...e.versions) : 0;
+    const ver = e.draft && !e.versions.length ? 'draft' : String(best);
+    by.set(slug, { versions: [...e.versions], draft: e.draft, best, manifestUrl: blobUrl(`${modulePrefix(userId, slug)}${ver}/manifest.json`) });
   }
   return by;
 }
+
 
 router.on('GET', 'modules', authed(async (req, res, user) => {
   const host = req.headers['x-forwarded-host'] ?? req.headers.host;
@@ -796,10 +828,10 @@ router.on('GET', 'modules/mine/:slug', authed(async (_req, res, user, { slug }) 
   const e = (await myModules(user.id)).get(slug);
   if (!e) { res.status(404).json({ error: 'No module with that name' }); return; }
   const ver = e.draft ? 'draft' : String(Math.max(...e.versions));
-  const files = await moduleFiles(user.id, slug);
-  const file = (name: string) => files.find((f) => f.pathname === `${modulePrefix(user.id, slug)}${ver}/${name}`);
-  const html = file('index.html') ? await fetchText(file('index.html')!.url) : null;
-  const manifest = file('manifest.json') ? JSON.parse((await fetchText(file('manifest.json')!.url)) ?? '{}') : null;
+  const at = (name: string) => `${blobUrl(`${modulePrefix(user.id, slug)}${ver}/${name}`)}?v=${Date.now()}`;
+  const html = await fetchText(at('index.html'));
+  const manifestText = await fetchText(at('manifest.json'));
+  const manifest = manifestText ? JSON.parse(manifestText) : null;
   res.status(200).json({ slug, showing: ver, versions: e.versions.sort((a, b) => a - b), has_draft: e.draft, manifest, html });
 }));
 
@@ -815,6 +847,8 @@ router.on('POST', 'modules/mine/:slug', authed(async (req, res, user, { slug }) 
   const opts = { access: 'public' as const, addRandomSuffix: false, allowOverwrite: true, token: blobToken(), cacheControlMaxAge: 0 };
   await put(`${base}index.html`, html, { ...opts, contentType: 'text/html; charset=utf-8' });
   await put(`${base}manifest.json`, JSON.stringify({ ...checked, id: `me/${slug}` }), { ...opts, contentType: 'application/json' });
+  const index = await readIndex(user.id);
+  if (!index[slug]?.draft) { index[slug] = { versions: index[slug]?.versions ?? [], draft: true }; await writeIndex(user.id, index); }
   res.status(200).json({ slug, use: `me/${slug}@draft`, src: `/um/${user.id}/${slug}/draft/index.html` });
 }));
 
@@ -823,6 +857,8 @@ router.on('DELETE', 'modules/mine/:slug', authed(async (_req, res, user, { slug 
   if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
   const files = await moduleFiles(user.id, slug);
   if (files.length) await del(files.map((f) => f.url), { token: blobToken() });
+  const index = await readIndex(user.id);
+  if (index[slug]) { delete index[slug]; await writeIndex(user.id, index); }
   res.status(200).json({ deleted: files.length });
 }));
 
@@ -831,17 +867,18 @@ router.on('POST', 'modules/mine/:slug/publish', authed(async (_req, res, user, {
   if (!SLUG.test(slug)) { res.status(400).json({ error: 'Bad module name' }); return; }
   const e = (await myModules(user.id)).get(slug);
   if (!e?.draft) { res.status(404).json({ error: 'There is no draft to publish' }); return; }
-  const files = await moduleFiles(user.id, slug);
   const next = (e.versions.length ? Math.max(...e.versions) : 0) + 1;
   const opts = { access: 'public' as const, addRandomSuffix: false, allowOverwrite: false, token: blobToken() };
   for (const name of ['index.html', 'manifest.json']) {
-    const f = files.find((x) => x.pathname === `${modulePrefix(user.id, slug)}draft/${name}`);
-    const body = f ? await fetchText(f.url) : null;
+    const body = await fetchText(`${blobUrl(`${modulePrefix(user.id, slug)}draft/${name}`)}?v=${Date.now()}`);
     if (body == null) { res.status(500).json({ error: `Couldn't read the draft's ${name}` }); return; }
     await put(`${modulePrefix(user.id, slug)}${next}/${name}`, body, {
       ...opts, contentType: name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/json',
     });
   }
+  const index = await readIndex(user.id);
+  index[slug] = { versions: [...(index[slug]?.versions ?? []), next], draft: true };
+  await writeIndex(user.id, index);
   res.status(200).json({ slug, version: next, use: `me/${slug}@${next}`, src: moduleSource(`me/${slug}@${next}`, user.id) });
 }));
 
@@ -863,8 +900,7 @@ router.on('GET', 'um/:uid/:slug/:ver/:file', async (_req, res, { uid, slug, ver,
   if (!/^[0-9a-f-]{36}$/.test(uid) || !SLUG.test(slug) || !/^(draft|\d+)$/.test(ver) || !['index.html', 'manifest.json'].includes(file)) {
     res.status(404).end(); return;
   }
-  const page = await list({ prefix: `${modulePrefix(uid, slug)}${ver}/${file}`, limit: 1, token: blobToken() });
-  const body = page.blobs[0] ? await fetchText(page.blobs[0].url) : null;
+  const body = await fetchText(blobUrl(`${modulePrefix(uid, slug)}${ver}/${file}`) + (ver === 'draft' ? `?v=${Date.now()}` : ''));
   if (body == null) { res.status(404).end(); return; }
   res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/json');
   res.setHeader('Content-Security-Policy', USER_MODULE_CSP);
