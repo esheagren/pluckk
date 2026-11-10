@@ -971,7 +971,7 @@ struct PracticeView: View {
             }
 
             ForEach(Array((item.modules?.prompt ?? []).enumerated()), id: \.offset) { _, module in
-                ModuleSlotView(module: module, slot: .prompt)
+                ModuleSlotView(module: module, slot: .prompt, revealed: session.revealed)
             }
             if let module = item.respondModule {
                 ModuleSlotView(module: module, slot: .respond, revealed: session.revealed) {

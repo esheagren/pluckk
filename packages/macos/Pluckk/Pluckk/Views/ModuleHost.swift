@@ -219,11 +219,13 @@ private struct ModuleWebView: NSViewRepresentable {
                 let response = ModuleResponse(score: score, summary: body["summary"] as? String)
                 DispatchQueue.main.async { [weak self] in self?.parent.onResponse?(response) }
             case "play":
-                if let src = body["src"] as? String, let url = MediaStore.displayURL(src), url.scheme == "https" || url.isFileURL {
+                if let src = body["src"] as? String, let url = MediaStore.displayURL(src), url.scheme == "https" || url.isFileURL,
+                   ModuleSpeech.shared.shouldPlay(src, auto: body["auto"] as? Bool == true) {
                     ModuleSpeech.shared.play(url)
                 }
             case "speak":
-                if let text = body["text"] as? String {
+                if let text = body["text"] as? String,
+                   ModuleSpeech.shared.shouldPlay(text, auto: body["auto"] as? Bool == true) {
                     ModuleSpeech.shared.say(text, lang: body["lang"] as? String ?? "zh-CN")
                 }
             default:
@@ -264,6 +266,16 @@ final class ModuleContainer: NSView {
 final class ModuleSpeech {
     static let shared = ModuleSpeech()
     private let synth = AVSpeechSynthesizer()
+    private var lastAuto: (key: String, at: Date)?
+
+    /// A sound a module plays on its own is played once: when the card's view is rebuilt (on
+    /// reveal, say) and the module asks again, the repeat is skipped. A click always plays.
+    func shouldPlay(_ key: String, auto: Bool) -> Bool {
+        guard auto else { return true }
+        if let last = lastAuto, last.key == key, Date().timeIntervalSince(last.at) < 90 { return false }
+        lastAuto = (key, Date())
+        return true
+    }
 
     func say(_ text: String, lang: String) {
         synth.stopSpeaking(at: .immediate)

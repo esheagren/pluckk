@@ -31,14 +31,15 @@
   // Plays once when shown unless autoplay is false; the button replays it.
   const b = document.getElementById('b');
   let props = {};
-  function play() {
-    if (props.src) { Pluckk.play(props.src); }
-    else if (props.text) { Pluckk.speak(props.text, props.lang || 'zh-CN'); }
+  function play(auto) {
+    const opts = { auto: auto === true };
+    if (props.src) { Pluckk.play(props.src, opts); }
+    else if (props.text) { Pluckk.speak(props.text, props.lang || 'zh-CN', opts); }
     else return;
     b.classList.add('playing');
     setTimeout(() => b.classList.remove('playing'), 900);
   }
-  b.addEventListener('click', play);
+  b.addEventListener('click', () => play(false));
   Pluckk.on('init', (m) => {
     props = m.props || {};
     document.getElementById('l').textContent = props.label ?? props.text ?? '';
@@ -46,7 +47,7 @@
     // Plays once: with the question (not again when the answer is revealed and the prompt is
     // set up afresh), or with the answer for a speaker placed there.
     const firstShowing = m.slot === 'reveal' || (m.slot === 'prompt' && !m.revealed);
-    if (firstShowing && props.autoplay !== false) setTimeout(play, 150);
+    if (firstShowing && props.autoplay !== false) setTimeout(() => play(true), 150);
   });
 </script>
 </body>

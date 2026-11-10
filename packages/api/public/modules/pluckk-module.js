@@ -65,12 +65,13 @@
       toHost({ type: 'response', data, score: Math.max(0, Math.min(1, Number(score) || 0)), summary: summary || null });
     },
     /** Play an audio file (a recorded pronunciation), through the host when it can. */
-    play(src) {
-      if (capabilities.play) { toHost({ type: 'play', src }); return; }
+    // opts.auto: played on its own when shown (the host plays the same sound on its own only once).
+    play(src, opts) {
+      if (capabilities.play) { toHost({ type: 'play', src, auto: !!(opts && opts.auto) }); return; }
       try { new Audio(src).play(); } catch (e) {}
     },
-    speak(text, lang) {
-      if (capabilities.speak) { toHost({ type: 'speak', text, lang }); return; }
+    speak(text, lang, opts) {
+      if (capabilities.speak) { toHost({ type: 'speak', text, lang, auto: !!(opts && opts.auto) }); return; }
       if (!('speechSynthesis' in window)) return;
       const u = new SpeechSynthesisUtterance(text);
       u.lang = lang || 'en-US';
