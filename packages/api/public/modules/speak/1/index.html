@@ -43,8 +43,10 @@
     props = m.props || {};
     document.getElementById('l').textContent = props.label ?? props.text ?? '';
     Pluckk.ready();
-    const shown = m.slot === 'reveal' || m.slot === 'prompt';
-    if (shown && props.autoplay !== false) setTimeout(play, 150);
+    // Plays once: with the question (not again when the answer is revealed and the prompt is
+    // set up afresh), or with the answer for a speaker placed there.
+    const firstShowing = m.slot === 'reveal' || (m.slot === 'prompt' && !m.revealed);
+    if (firstShowing && props.autoplay !== false) setTimeout(play, 150);
   });
 </script>
 </body>
