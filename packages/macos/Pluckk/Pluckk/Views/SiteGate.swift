@@ -144,8 +144,11 @@ final class SiteGate: ObservableObject {
     /// Reads every tab's address in one browser and sends gated ones to the block page. Runs
     /// osascript as its own process with a time limit, so a slow or hung browser can't stall
     /// Pluckk. Returns a message if macOS refused (Automation permission not given).
+    /// The separator is set outside the tell block: inside it, `tab` means the browser's tab
+    /// class and comes out as the word "tab", so no line would parse and nothing would be blocked.
     nonisolated private static func sweep(browser id: String, gated: [String]) -> String? {
         let read = """
+        set sep to (character id 9)
         with timeout of 3 seconds
         tell application id "\(id)"
         set out to ""
@@ -155,7 +158,7 @@ final class SiteGate: ObservableObject {
         set ti to 0
         repeat with u in (get URL of tabs of w)
         set ti to ti + 1
-        set out to out & wi & tab & ti & tab & u & linefeed
+        set out to out & wi & sep & ti & sep & u & linefeed
         end repeat
         end repeat
         return out
