@@ -20,7 +20,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
 import { CLAUDE_FAST_MODEL, extractJson, responseText } from '../lib/models.js';
 import type { ClaudeResponse } from '../lib/claude-types.js';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema, studyDayStart } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
@@ -231,7 +231,7 @@ router.on('GET', 'review/queue', authed(async (_req, res, user) => {
   const db = getDb();
   const cards = await listCards(user.id);
   const states = await db.select().from(schema.cardReviewState).where(eq(schema.cardReviewState.userId, user.id));
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayStart = studyDayStart();   // 5pm in the study time zone, not the server's midnight
   const logs = await db.selectDistinct({ cardId: schema.reviewLogs.cardId }).from(schema.reviewLogs)
     .where(and(eq(schema.reviewLogs.userId, user.id), gte(schema.reviewLogs.reviewedAt, todayStart.toISOString()), eq(schema.reviewLogs.previousStatus, 'new')));
   res.status(200).json({ cards, states: snake(states), new_reviewed_today: logs.map((l) => l.cardId) });
@@ -627,7 +627,7 @@ async function mixerContext(userId: string) {
     .map((r) => ({ ...r, componentId: r.componentId ?? MAIN_COMPONENT }));
 
   // New cards already introduced today, per folder.
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayStart = studyDayStart();   // 5pm in the study time zone, not the server's midnight
   const introduced = await db.execute(sql`
     select c.folder_id, count(distinct l.card_id)::int as n
     from review_logs l join cards c on c.id = l.card_id
