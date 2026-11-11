@@ -85,6 +85,7 @@ struct CardEditorPane: View {
                         if let notice { Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.warning) }
                         texts
                         if let url = MediaStore.displayURL(imageURL) { imageRow(url) }
+                        onTheCard
                         splitSection
                         assistantLine
                         advancedSection
@@ -386,8 +387,33 @@ struct CardEditorPane: View {
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.03)))
     }
 
-    /// One module on the card as a person sees it: what it is, where it shows, its settings as a
-    /// form, a live preview. Raw props only under Advanced.
+    /// What the card shows beyond its words: each module live, as it appears in Practice (the
+    /// diagram to click, the map, the audio), so the card can be seen while it's edited. Their
+    /// settings are under Advanced, and a change there redraws these.
+    @ViewBuilder private var onTheCard: some View {
+        let shown = (top == .interactive ? [respond].compactMap { $0 } : []) + extras
+        if !shown.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                label("On the card")
+                ForEach(shown) { m in
+                    ModulePreviewDebounced(use: m.use, propsText: m.propsText, slot: m.slot, src: source(for: m.use), title: previewTitle(m))
+                }
+            }
+        }
+    }
+
+    /// "Click on the body · how you answer", "Read aloud · with the question".
+    private func previewTitle(_ m: EditableModule) -> String {
+        let name = catalogue.first { $0["use"] as? String == m.use }.map { title(of: $0, respond: m.slot == .respond) } ?? m.use
+        switch m.slot {
+        case .respond: return "\(name) · how you answer"
+        case .prompt: return "\(name) · with the question"
+        case .reveal: return "\(name) · with the answer"
+        }
+    }
+
+    /// One module's settings: what it is, where it shows, and its settings as a form (raw props
+    /// behind the form's own Advanced). Its live preview is above, with the card's words.
     private func attachmentRow(_ m: EditableModule, placement: Bool) -> some View {
         let manifest = catalogue.first { $0["use"] as? String == m.use }
         let props = parse(m.propsText)
@@ -406,14 +432,10 @@ struct CardEditorPane: View {
                 Button(action: { remove(m) }) { Image(systemName: "trash").font(.system(size: 11)) }
                     .buttonStyle(.plain).foregroundColor(.secondary).help("Remove")
             }
-            HStack(alignment: .top, spacing: 12) {
-                ModuleSettingsForm(schema: manifest?["props"] as? [String: Any], propsText: Binding(
-                    get: { current(m)?.propsText ?? m.propsText },
-                    set: { text in update(m) { $0.propsText = text } }))
-                    .frame(minWidth: 220, maxWidth: 300, alignment: .leading)
-                ModulePreviewDebounced(use: m.use, propsText: m.propsText, slot: m.slot, src: source(for: m.use))
-                    .frame(maxWidth: .infinity)
-            }
+            ModuleSettingsForm(schema: manifest?["props"] as? [String: Any], propsText: Binding(
+                get: { current(m)?.propsText ?? m.propsText },
+                set: { text in update(m) { $0.propsText = text } }))
+                .frame(maxWidth: 420, alignment: .leading)
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.03)))
@@ -809,12 +831,13 @@ struct ModulePreviewDebounced: View {
     let propsText: String
     let slot: ModuleSlot
     let src: String?
+    var title = "Preview"
     @State private var shown: String?
 
     var body: some View {
         Group {
             if let shown, let data = shown.data(using: .utf8), let props = try? JSONDecoder().decode(JSONValue.self, from: data) {
-                ModulePreview(module: ModuleUse(use: use, props: props, src: src), slot: slot, title: "Preview")
+                ModulePreview(module: ModuleUse(use: use, props: props, src: src), slot: slot, title: title)
                     .id(shown)
             } else {
                 Text("Preview appears when the settings are complete.").font(.system(size: 11)).foregroundColor(.secondary)
