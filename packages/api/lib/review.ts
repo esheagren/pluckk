@@ -69,6 +69,8 @@ export async function buildItems(db: Db, userId: string, dealt: DealtItem[]) {
       // Verbatim, not snake_cased: module props are the module's own keys. Each use gets the
       // address its page is served from.
       modules: 'modules' in spec && spec.modules ? withSources(spec.modules, userId) : null,
+      // The card's Wikipedia article: a title, null (none fits) or absent (not looked for yet).
+      ...('wikipedia' in spec ? { wikipedia: spec.wikipedia ?? null } : {}),
     });
   }
   return items;

@@ -76,6 +76,8 @@ class PluckkAPI {
         let items: [String]?
         let prompts: [QAPair]?
         let diagram_prompt: String?
+        /// The Wikipedia article the model chose for the card, checked by the API.
+        let wikipedia: String?
 
         struct QAPair: Decodable {
             let question: String
@@ -84,6 +86,12 @@ class PluckkAPI {
 
         /// Convert API card to GeneratedCard, preserving structure for bidirectional/list types.
         func toGeneratedCard() -> GeneratedCard {
+            var card = shaped()
+            card.wikipedia = wikipedia
+            return card
+        }
+
+        private func shaped() -> GeneratedCard {
             let cardStyle = CardStyle(rawValue: style) ?? .qa
             switch style {
             case "qa_bidirectional":
@@ -148,6 +156,12 @@ class PluckkAPI {
 
     /// The card as the core engine stores it: one spec, components scheduled server-side.
     private func spec(for card: GeneratedCard) throws -> [String: Any] {
+        var spec = try shape(of: card)
+        if let wikipedia = card.wikipedia, !wikipedia.isEmpty { spec["wikipedia"] = wikipedia }
+        return spec
+    }
+
+    private func shape(of card: GeneratedCard) throws -> [String: Any] {
         switch card.style {
         case .qa_bidirectional:
             guard let f = card.forward, let r = card.reverse else { throw APIError.serverError("Bidirectional card is missing a direction") }
@@ -442,6 +456,21 @@ class PluckkAPI {
         return try JSONDecoder().decode([LibraryCard].self, from: data)
     }
 
+    /// The card's Wikipedia article: the one it has, or (the first time) the one the Wikipedia
+    /// agent finds and stores. nil: no article fits. `force` looks again.
+    func cardWikipedia(token: String, cardId: String, force: Bool = false) async throws -> String? {
+        struct Answer: Decodable { let wikipedia: String? }
+        let data = try await send(token: token, method: "POST", path: "/api/v1/cards/\(cardId)/wikipedia",
+                                  json: force ? ["force": true] : [:])
+        return try JSONDecoder().decode(Answer.self, from: data).wikipedia
+    }
+
+    /// Set the card's Wikipedia article (nil: none fits).
+    func setCardWikipedia(token: String, cardId: String, title: String?) async throws {
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)",
+                           json: ["wikipedia": title.map { $0 as Any } ?? NSNull()])
+    }
+
     /// Replace a card's tags.
     func setTags(token: String, cardId: String, tags: [String]) async throws {
         _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: ["tags": tags])
@@ -628,6 +657,8 @@ struct ReviewItem: Decodable, Identifiable {
     let source_selection: String?
     /// Card modules (maps, audio…), passed through verbatim; see Views/ModuleHost.swift.
     var modules: CardModules?
+    /// The card's Wikipedia article (exact title), when one has been chosen.
+    var wikipedia: String?
 
     struct Provenance: Decodable {
         let identifier: String?

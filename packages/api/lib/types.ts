@@ -242,6 +242,8 @@ export interface GeneratedCard {
   rationale?: string;
   originalQuestion?: string;
   wasImproved?: boolean;
+  /** The English Wikipedia article to read for more (exact title), checked against Wikipedia; null: none fits. */
+  wikipedia?: string | null;
   tags?: {
     content_type?: string;
     domain?: string;

@@ -176,6 +176,10 @@ final class PracticeSession: ObservableObject {
         for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
     }
 
+    func applyExternalWikipedia(cardId: String, title: String?) {
+        for i in queue.indices where queue[i].card_id == cardId { queue[i].wikipedia = title }
+    }
+
     func removeCardExternally(_ cardId: String) {
         guard index <= queue.count else { return }
         let wasCurrent = current?.card_id == cardId
@@ -226,6 +230,27 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var aheadState = AheadState.none
 
     func start() { deal(ahead: nil) }
+
+    /// The queue ran out: deal whatever is due now and keep going in the same session (count,
+    /// undo and timer carry on), or finish when nothing is.
+    private func continueIfMoreDue() {
+        guard let token = AuthManager.shared.accessToken else { phase = .done; return }
+        phase = .loading
+        let focus: String?? = focusDeck.map { $0.folder_id }
+        Task {
+            // Each rating is saved (and rescheduled) before the next card shows, so what the
+            // server deals now is due now.
+            let fresh = (try? await dealScheduled(token: token, focus: focus, ahead: nil)) ?? []
+            guard case .loading = phase, index >= queue.count else { return }
+            if fresh.isEmpty {
+                phase = .done
+            } else {
+                queue += fresh
+                phase = .reviewing
+            }
+            refreshTodayCounts()
+        }
+    }
 
     func practiceAhead(_ count: Int) { deal(ahead: count) }
 
@@ -759,7 +784,12 @@ final class PracticeSession: ObservableObject {
         reading = nil
         deeper = false
         shownAt = Date()
-        if index >= queue.count { phase = .done }
+        if index >= queue.count {
+            // Out of cards. Before calling it done, see whether more came due while practising
+            // (a missed card's short step, the other side of a two-way card): those carry on in
+            // this session rather than needing another start.
+            if practiceRun == nil { continueIfMoreDue() } else { phase = .done }
+        }
         if celebrateAfterThisCard {
             celebrateAfterThisCard = false
             sprintEnded()
@@ -836,7 +866,7 @@ struct PracticeView: View {
         .onChange(of: session.deeper) { open in
             // The first time it's opened for a card, find its article: the question's words and the answer's.
             guard open, let item = session.current else { return }
-            wiki.start(cardId: item.card_id, question: item.shownQuestion, answer: item.answer, deck: item.folder?.name)
+            wiki.start(cardId: item.card_id, stored: item.wikipedia)
         }
     }
 
@@ -1103,7 +1133,7 @@ struct PracticeView: View {
         Button(action: { session.toggleDeeper() }) {
             HStack(spacing: 5) {
                 Text("W").font(.system(size: 11, weight: .semibold, design: .serif))
-                Text(session.deeper ? "Hide Wikipedia" : WikiPick.remembered(item.card_id).map { "Wikipedia · \($0)" } ?? "Wikipedia")
+                Text(session.deeper ? "Hide Wikipedia" : item.wikipedia.map { "Wikipedia · \($0)" } ?? "Wikipedia")
                     .lineLimit(1)
             }
             .font(.system(size: 11))

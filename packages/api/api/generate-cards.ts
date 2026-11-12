@@ -8,6 +8,7 @@ import { authenticateRequest, isAuthError } from '../lib/auth.js';
 import type { GenerateCardsRequest, GeneratedCard } from '../lib/types.js';
 import type { ClaudeResponse } from '../lib/claude-types.js';
 import { CLAUDE_FAST_MODEL, CLAUDE_MODEL, extractJson, responseText } from '../lib/models.js';
+import { checkTitles } from '../lib/wikipedia.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -173,11 +174,37 @@ ${diagramStyle}
 - Cover the key concepts thoroughly - aim for comprehensive extraction of learnable facts
 - Tags help organization - always include content_type, domain, and technicality
 
+**Wikipedia (every card):**
+Give each card a "wikipedia" field: the exact title of the English Wikipedia article a learner should read to go further on that card's subject, the idea, thing, person, event or place it teaches. Choose the article whose main subject it is, or the closest broader article that covers it well (the parent concept, the theory, the work it comes from). Name the subject, don't echo the card's words: a card about signalling identity through beliefs wants an article on signalling or belief, not one that merely shares a word with it. Use null when you're not confident such an article exists.
+
 **Output Format:**
 Return ONLY valid JSON, no markdown code blocks:
 {"cards":[...]}`;
 }
 
+
+/**
+ * The articles the model named, checked against Wikipedia: each becomes the title Wikipedia
+ * files it under, or null when there's no such article. If Wikipedia can't be asked, the field
+ * is dropped, and the Wikipedia agent looks when the card is first opened.
+ */
+async function settleWikipedia(cards: GeneratedCard[]): Promise<void> {
+  const named = cards.map((c) => (typeof c.wikipedia === 'string' ? c.wikipedia.trim() : '')).filter(Boolean);
+  let checked: Map<string, { title: string } | null> | null = null;
+  try {
+    checked = named.length ? await checkTitles(named) : new Map();
+  } catch (error) {
+    console.error('Checking Wikipedia titles failed:', error);
+  }
+  for (const card of cards) {
+    const name = typeof card.wikipedia === 'string' ? card.wikipedia.trim() : '';
+    if (!checked) { delete card.wikipedia; continue; }
+    if (!name) { card.wikipedia = card.wikipedia === null ? null : undefined; continue; }
+    const article = checked.get(name);
+    if (article === undefined) delete card.wikipedia;
+    else card.wikipedia = article?.title ?? null;
+  }
+}
 
 export default async function handler(
   req: VercelRequest,
@@ -292,6 +319,7 @@ Generate 4-8 spaced repetition cards for the highlighted selection, depending on
       res.status(500).json({ error: 'Invalid response format from AI' });
       return;
     }
+    await settleWikipedia(parsed.cards);
     res.status(200).json({
       cards: parsed.cards
     });

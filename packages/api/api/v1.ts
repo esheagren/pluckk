@@ -20,11 +20,12 @@ import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
 import { CLAUDE_FAST_MODEL, extractJson, responseText } from '../lib/models.js';
 import type { ClaudeResponse } from '../lib/claude-types.js';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema, studyDayStart, SESSION_PASS_REVIEWS, SESSION_PASS_WINDOW_MINUTES } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema, studyDayStart, SESSION_PASS_REVIEWS, SESSION_PASS_WINDOW_MINUTES, renderComponent } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
 import { buildItems, moduleSource, stateFromRow } from '../lib/review.js';
+import { findArticle } from '../lib/wikipedia.js';
 import { commit, loadEvents } from '../lib/store.js';
 import { Router, pathSegments, type RouteHandler } from '../lib/router.js';
 import { snake, pick, isoTimestamp } from '../lib/serialize.js';
@@ -177,6 +178,33 @@ router.on('PATCH', 'cards/:id', authed(async (req, res, user, { id }) => {
   const row = await patchCard(getDb(), user.id, id, parsed.data);
   const folder = row.folderId ? (await getDb().select().from(schema.folders).where(eq(schema.folders.id, row.folderId)))[0] ?? null : null;
   res.status(200).json({ ...snake<Record<string, unknown>>(row), folder: folder ? snake(folder) : null });
+}));
+
+// The card's Wikipedia article. One the card already has (or "none fits") comes straight back;
+// otherwise the Wikipedia agent looks for it, and its answer is stored on the card. `force`
+// looks again even if the card has one.
+router.on('POST', 'cards/:id/wikipedia', authed(async (req, res, user, { id }) => {
+  const db = getDb();
+  const row = await getCardRow(db, user.id, id);
+  const spec = specOf(row);
+  const force = (req.body ?? {}).force === true;
+  if ('wikipedia' in spec && spec.wikipedia !== undefined && !force) {
+    res.status(200).json({ wikipedia: spec.wikipedia ?? null, found: false });
+    return;
+  }
+  const folder = row.folderId ? (await db.select().from(schema.folders).where(eq(schema.folders.id, row.folderId)))[0] ?? null : null;
+  const source = [row.provenance?.containerTitle, row.provenance?.title].filter(Boolean).join(' · ') || row.sourceTitle || null;
+  const main = renderComponent(spec, componentIdsOf(spec)[0]);
+  let article;
+  try {
+    article = await findArticle({ question: main.question, answer: main.answer, deck: folder?.name ?? null, source });
+  } catch (error) {
+    console.error('Wikipedia agent failed:', error);
+    res.status(502).json({ error: "Couldn't look for an article just now" });
+    return;
+  }
+  await patchCard(db, user.id, id, { wikipedia: article?.title ?? null });
+  res.status(200).json({ wikipedia: article?.title ?? null, description: article?.description ?? null, found: true });
 }));
 
 // Soft delete (card.setDeleted). The row and its diary stay; every read filters is_deleted.
