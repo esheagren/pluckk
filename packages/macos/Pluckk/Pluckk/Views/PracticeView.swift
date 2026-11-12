@@ -1574,7 +1574,7 @@ struct SprintCelebration: View {
                 .frame(maxWidth: 320)
                 .opacity(showGrid ? 1 : 0)
                 .offset(y: showGrid ? 0 : 6)
-            if showGrid && (gate.sessionEarned || gate.isOpen) {
+            if showGrid && (gate.earned != nil || gate.isOpen) {
                 SiteGateOffer(dayDone: false)
                 Button("Keep practising") { finish() }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
@@ -1590,7 +1590,7 @@ struct SprintCelebration: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeOut(duration: 0.35)) { showGrid = true }
             try? await Task.sleep(nanoseconds: 2_350_000_000)
-            if !gate.sessionEarned { finish() }     // earned minutes wait to be taken
+            if gate.earned == nil { finish() }     // earned minutes wait to be taken
         }
     }
 

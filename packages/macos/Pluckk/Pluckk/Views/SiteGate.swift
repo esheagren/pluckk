@@ -26,6 +26,7 @@ final class SiteGate: ObservableObject {
     private static let usedTodayKey = "siteGate.windowDay"
     private static let finishedDayKey = "siteGate.finishedDay"
     private static let sessionDayKey = "siteGate.sessionEarnedDay"
+    private static let leftSinceKey = "siteGate.leftSinceWindow"
     /// What a practice session must be to earn a window (the same numbers as core's gate.ts).
     static let sessionMinutes = 4
     static let sessionCards = 5
@@ -66,10 +67,13 @@ final class SiteGate: ObservableObject {
     var isOpen: Bool { (unlockedUntil ?? .distantPast) > now }
     var secondsLeft: Int { max(0, Int((unlockedUntil ?? now).timeIntervalSince(now).rounded(.up))) }
 
-    /// The first window of a day comes with finishing it; after that, each needs more cards rated.
+    /// The first window of a day comes with finishing it; after that, each needs more cards rated:
+    /// a handful when there was a batch to clear, the full ten when the cards were added by hand.
+    /// (A handful, not none, so one card bouncing back every few minutes doesn't earn a window.)
     var cardsToNextWindow: Int {
         let usedToday = defaults.string(forKey: Self.usedTodayKey) == Self.today()
-        return usedToday ? max(0, Self.cardsPerWindow - reviewsSinceWindow) : 0
+        let needed = leftSinceWindow ? Self.sessionCards : Self.cardsPerWindow
+        return usedToday ? max(0, needed - reviewsSinceWindow) : 0
     }
 
     func start() {
@@ -116,16 +120,24 @@ final class SiteGate: ObservableObject {
     /// Practice's latest count of what's left today.
     func noteToday(left: Int) {
         if left == 0 { noteDayFinished() }
+        // Cards waiting since the last window: clearing them is what earns the next one.
+        if left > 0 && !defaults.bool(forKey: Self.leftSinceKey) { defaults.set(true, forKey: Self.leftSinceKey) }
         if dayIsDone != (left == 0) { dayIsDone = left == 0 }
     }
+
+    /// There have been cards to do since the last window (a new batch came in, say).
+    private var leftSinceWindow: Bool { defaults.bool(forKey: Self.leftSinceKey) }
 
     /// How a window was earned: by finishing the day's cards, or by a practice session after that.
     enum Earned { case day, session }
 
     /// A window there for the taking, if any.
+    /// Finishing what's due earns one: the first of the day, and again whenever a later batch
+    /// has been cleared (see cardsToNextWindow). Mid-batch, once the day has been finished, a
+    /// practice session earns one too.
     var earned: Earned? {
-        if sessionEarned { return .session }
-        return dayIsDone && cardsToNextWindow == 0 ? .day : nil
+        if dayIsDone && cardsToNextWindow == 0 { return .day }
+        return sessionEarned ? .session : nil
     }
 
     /// Open the gate for the earned minutes, and the site itself in the default browser.
@@ -167,6 +179,7 @@ final class SiteGate: ObservableObject {
         defaults.set(0, forKey: Self.sinceKey)
         defaults.set(Self.today(), forKey: Self.usedTodayKey)
         defaults.removeObject(forKey: Self.sessionDayKey)      // a session's window is used once
+        defaults.set(false, forKey: Self.leftSinceKey)
     }
 
     /// Where to send the browser for a site: through Pluckk's pass page when there's a pass (so
@@ -403,21 +416,20 @@ struct SiteGateOffer: View {
     var body: some View {
         if enabled && !gate.sites.isEmpty {
             VStack(spacing: 8) {
-                let byDay = dayDone && gate.cardsToNextWindow == 0
                 if gate.isOpen {
                     Text("Open for \(gate.countdown) more")
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
                         .foregroundColor(PluckkTheme.accent)
-                } else if byDay || gate.sessionEarned {
+                } else if let earned = gate.earned {
                     Text("You've earned \(gate.minutes) minutes").font(.system(size: 12)).foregroundColor(.secondary)
                     HStack(spacing: 8) {
                         ForEach(gate.shownSites, id: \.self) { site in
-                            Button("Open \(site)") { gate.open(site: site, bySession: !byDay) }
+                            Button("Open \(site)") { gate.open(site: site, bySession: earned == .session) }
                                 .buttonStyle(PillButtonStyle(prominent: false))
                         }
                     }
                 } else if dayDone {
-                    Text("\(gate.cardsToNextWindow) more card\(gate.cardsToNextWindow == 1 ? "" : "s") to earn another \(gate.minutes) minutes")
+                    Text("\(gate.cardsToNextWindow) more card\(gate.cardsToNextWindow == 1 ? "" : "s") to earn another \(gate.minutes) minutes. Add new cards above.")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                 } else if gate.finishedToday {
                     // The day was done once; what's here now is the next batch.
@@ -450,11 +462,11 @@ struct SiteGateChip: View {
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundColor(PluckkTheme.accent)
                     .help("\(gate.shownSites.joined(separator: " and ")) stay open until this runs out")
-            } else if gate.sessionEarned {
+            } else if let earned = gate.earned {
                 HStack(spacing: 8) {
                     Text("\(gate.minutes) min earned").font(.system(size: 11, weight: .semibold)).foregroundColor(PluckkTheme.accent)
                     ForEach(gate.shownSites, id: \.self) { site in
-                        Button(action: { gate.open(site: site, bySession: true) }) {
+                        Button(action: { gate.open(site: site, bySession: earned == .session) }) {
                             Text(site).font(.system(size: 11)).underline().foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
