@@ -5,6 +5,8 @@ import SwiftUI
 /// half Pluckk reads the open tabs of Chrome-family browsers and Safari through Apple Events; a tab
 /// on a gated site, outside an earned window, is sent to a page that says so. Finishing the day
 /// (nothing due, no new cards left) earns a few minutes; the next window needs more cards done.
+/// Once the day has been finished, a later batch (the next study day's, arriving in the evening)
+/// doesn't lock the sites again: a finished practice session earns a window.
 /// It only runs while Pluckk does: a nudge, not a lock.
 @MainActor
 final class SiteGate: ObservableObject {
@@ -20,6 +22,11 @@ final class SiteGate: ObservableObject {
     private static let untilKey = "siteGate.unlockedUntil"
     private static let sinceKey = "siteGate.reviewsSinceWindow"
     private static let usedTodayKey = "siteGate.windowDay"
+    private static let finishedDayKey = "siteGate.finishedDay"
+    private static let sessionDayKey = "siteGate.sessionEarnedDay"
+    /// What a practice session must be to earn a window (the same numbers as core's gate.ts).
+    static let sessionMinutes = 4
+    static let sessionCards = 5
 
     /// Where a blocked tab goes.
     static let blockPage = "\(Config.backendURL)/blocked.html"
@@ -77,8 +84,33 @@ final class SiteGate: ObservableObject {
         defaults.set(reviewsSinceWindow, forKey: Self.sinceKey)
     }
 
+    // MARK: After the day is done
+
+    /// Today's cards were all done at some point today (by the calendar), even if a new batch has
+    /// arrived since.
+    var finishedToday: Bool { defaults.string(forKey: Self.finishedDayKey) == Self.today() }
+
+    /// Nothing due and no new cards left: the day is finished, and stays so until midnight.
+    func noteDayFinished() {
+        guard !finishedToday else { return }
+        defaults.set(Self.today(), forKey: Self.finishedDayKey)
+        objectWillChange.send()
+    }
+
+    /// A window earned by a practice session and not yet used. It lapses at midnight.
+    var sessionEarned: Bool { defaults.string(forKey: Self.sessionDayKey) == Self.today() }
+
+    /// A timed session ran its course. Once the day has been finished, one that's long enough and
+    /// had enough cards rated in it earns a window.
+    func noteSession(minutes: Int, cards: Int) {
+        guard enabled, finishedToday, !isOpen, minutes >= Self.sessionMinutes, cards >= Self.sessionCards else { return }
+        defaults.set(Self.today(), forKey: Self.sessionDayKey)
+        objectWillChange.send()
+    }
+
     /// Open the gate for the earned minutes, and the site itself in the default browser.
-    func open(site: String) {
+    /// `bySession`: the window was earned by a practice session rather than a finished day.
+    func open(site: String, bySession: Bool = false) {
         let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
         unlockedUntil = until
         now = Date()
@@ -86,13 +118,15 @@ final class SiteGate: ObservableObject {
         defaults.set(until, forKey: Self.untilKey)
         defaults.set(0, forKey: Self.sinceKey)
         defaults.set(Self.today(), forKey: Self.usedTodayKey)
+        defaults.removeObject(forKey: Self.sessionDayKey)      // a session's window is used once
         let minutes = self.minutes
         // Through Pluckk's pass page with a signed pass, so the Learn Gate extension in Chrome
         // opens too; if no pass can be had, straight to the site.
         Task {
             var target = URL(string: "https://\(site)")
             if let token = AuthManager.shared.accessToken,
-               let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass", json: ["minutes": minutes]),
+               let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass",
+                                                          json: bySession ? ["minutes": minutes, "session": true] : ["minutes": minutes]),
                let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let signed = pass["token"] as? String {
                 target = URL(string: "\(Config.backendURL)/pass.html#token=\(signed)&to=https://\(site)")
             }
@@ -210,7 +244,15 @@ final class SiteGate: ObservableObject {
     }
 }
 
-/// On the Done screen: the earned minutes, as one button per gated site, or what's left to earn them.
+extension SiteGate {
+    /// twitter.com is X's old name; one button for the pair is enough.
+    var shownSites: [String] { sites.filter { $0 != "twitter.com" || !sites.contains("x.com") } }
+
+    var countdown: String { "\(secondsLeft / 60):\(String(format: "%02d", secondsLeft % 60))" }
+}
+
+/// On the Done screen and after a session: the earned minutes, as one button per gated site, or
+/// what's left to earn them.
 struct SiteGateOffer: View {
     let dayDone: Bool
     @ObservedObject private var gate = SiteGate.shared
@@ -219,23 +261,29 @@ struct SiteGateOffer: View {
     var body: some View {
         if enabled && !gate.sites.isEmpty {
             VStack(spacing: 8) {
+                let byDay = dayDone && gate.cardsToNextWindow == 0
                 if gate.isOpen {
-                    Text("Open for \(gate.secondsLeft / 60):\(String(format: "%02d", gate.secondsLeft % 60)) more")
+                    Text("Open for \(gate.countdown) more")
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
                         .foregroundColor(PluckkTheme.accent)
-                } else if dayDone && gate.cardsToNextWindow == 0 {
+                } else if byDay || gate.sessionEarned {
                     Text("You've earned \(gate.minutes) minutes").font(.system(size: 12)).foregroundColor(.secondary)
                     HStack(spacing: 8) {
-                        ForEach(visibleSites, id: \.self) { site in
-                            Button("Open \(site)") { gate.open(site: site) }
+                        ForEach(gate.shownSites, id: \.self) { site in
+                            Button("Open \(site)") { gate.open(site: site, bySession: !byDay) }
                                 .buttonStyle(PillButtonStyle(prominent: false))
                         }
                     }
                 } else if dayDone {
                     Text("\(gate.cardsToNextWindow) more card\(gate.cardsToNextWindow == 1 ? "" : "s") to earn another \(gate.minutes) minutes")
                         .font(.system(size: 12)).foregroundColor(.secondary)
+                } else if gate.finishedToday {
+                    // The day was done once; what's here now is the next batch.
+                    Text("Today's cards are done. A practice session of \(SiteGate.sessionMinutes) minutes or more earns \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or ")).")
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                        .multilineTextAlignment(.center).frame(maxWidth: 380)
                 } else {
-                    Text("Finish today's cards to open \(visibleSites.joined(separator: " or "))")
+                    Text("Finish today's cards to open \(gate.shownSites.joined(separator: " or "))")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                 }
                 if let problem = gate.permissionProblem {
@@ -245,7 +293,33 @@ struct SiteGateOffer: View {
             }
         }
     }
+}
 
-    /// twitter.com is X's old name; one button for the pair is enough.
-    private var visibleSites: [String] { gate.sites.filter { $0 != "twitter.com" || !gate.sites.contains("x.com") } }
+/// In Practice's header: a session's window waiting to be used, or how long an open one has left.
+/// Nothing at all otherwise.
+struct SiteGateChip: View {
+    @ObservedObject private var gate = SiteGate.shared
+    @AppStorage(SiteGate.enabledKey) private var enabled = true
+
+    var body: some View {
+        if enabled && !gate.sites.isEmpty {
+            if gate.isOpen {
+                Text("Sites open \(gate.countdown)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundColor(PluckkTheme.accent)
+                    .help("\(gate.shownSites.joined(separator: " and ")) stay open until this runs out")
+            } else if gate.sessionEarned {
+                HStack(spacing: 8) {
+                    Text("\(gate.minutes) min earned").font(.system(size: 11, weight: .semibold)).foregroundColor(PluckkTheme.accent)
+                    ForEach(gate.shownSites, id: \.self) { site in
+                        Button(action: { gate.open(site: site, bySession: true) }) {
+                            Text(site).font(.system(size: 11)).underline().foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open \(site) for \(gate.minutes) minutes")
+                    }
+                }
+            }
+        }
+    }
 }
