@@ -147,9 +147,9 @@ final class PracticeSession: ObservableObject {
             do {
                 let counts = try await PluckkAPI.shared.reviewToday(token: token)
                 if request == countsRequest { todayCounts = counts }
-                // Nothing due and no new cards left: the day is done, which the site gate remembers
-                // until midnight even if tomorrow's batch arrives this evening.
-                if counts.review == 0 && counts.learn == 0 { SiteGate.shared.noteDayFinished() }
+                // The site gate hears what's left. Nothing due and no new cards: the day is done,
+                // which it remembers until midnight even if tomorrow's batch arrives this evening.
+                SiteGate.shared.noteToday(left: counts.review + counts.learn)
             } catch {
                 if OfflineStore.isNetworkError(error), request == countsRequest, let counts = OfflineStore.shared.today() {
                     todayCounts = counts
