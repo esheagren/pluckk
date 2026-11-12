@@ -89,6 +89,7 @@ final class PracticeSession: ObservableObject {
     func beginSprint() {
         timesUp = false
         celebrateAfterThisCard = false
+        sprintCards = 0
         switch phase {
         case .idle, .done, .failed: start()
         default: break
@@ -101,10 +102,19 @@ final class PracticeSession: ObservableObject {
         if revealed || editing {
             celebrateAfterThisCard = true
         } else {
-            timesUp = true
+            sprintEnded()
         }
     }
     private var celebrateAfterThisCard = false
+    /// Cards rated in the sprint that's running (or just ran).
+    private var sprintCards = 0
+
+    /// The sprint ran its full length: "Good job", and the site gate hears how it went (a real
+    /// session can earn a window once the day's cards have been done).
+    private func sprintEnded() {
+        timesUp = true
+        SiteGate.shared.noteSession(minutes: SessionTimer.shared.minutes, cards: sprintCards)
+    }
 
     /// The "Good job" moment is over: back to the next card, unrevealed. Nothing asks you to go
     /// on; revealing it simply starts another sprint.
@@ -137,6 +147,9 @@ final class PracticeSession: ObservableObject {
             do {
                 let counts = try await PluckkAPI.shared.reviewToday(token: token)
                 if request == countsRequest { todayCounts = counts }
+                // Nothing due and no new cards left: the day is done, which the site gate remembers
+                // until midnight even if tomorrow's batch arrives this evening.
+                if counts.review == 0 && counts.learn == 0 { SiteGate.shared.noteDayFinished() }
             } catch {
                 if OfflineStore.isNetworkError(error), request == countsRequest, let counts = OfflineStore.shared.today() {
                     todayCounts = counts
@@ -286,6 +299,11 @@ final class PracticeSession: ObservableObject {
                 self.closeReader()
                 return nil
             }
+            // And Wikipedia, likewise.
+            if let self, self.deeper, event.keyCode == 53 {
+                self.closeDeeper()
+                return nil
+            }
             // ⌘+ / ⌘- / ⌘0: the size of the card's text.
             if let panel = PluckkPanel.shared, event.window === panel.hostWindow, AppState.shared.currentView == .practice {
                 let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
@@ -332,6 +350,9 @@ final class PracticeSession: ObservableObject {
                 self.rate(rating)
             case 123, 6:                                // ← or Z
                 self.undo()
+            case 13:                                    // W: Wikipedia on the card, once it's revealed
+                guard self.revealed else { handled = false; break }
+                self.toggleDeeper()
             default:
                 handled = false
             }
@@ -386,6 +407,20 @@ final class PracticeSession: ObservableObject {
     }
 
     func closeReader() { reading = nil }
+
+    /// Wikipedia's note under the card, open or not. It closes with each new card, and nothing is
+    /// looked up until it's opened.
+    @Published private(set) var deeper = false
+
+    func toggleDeeper() {
+        guard current != nil, revealed, !editing else { return }
+        withAnimation(.easeOut(duration: 0.18)) { deeper.toggle() }
+    }
+
+    func closeDeeper() {
+        guard deeper else { return }
+        withAnimation(.easeOut(duration: 0.18)) { deeper = false }
+    }
 
     // MARK: Number cards
 
@@ -507,6 +542,7 @@ final class PracticeSession: ObservableObject {
                 }
                 SiteGate.shared.noteReview()
                 reviewedCount += 1
+                sprintCards += 1
                 if rating == .again {
                     var requeued = item
                     requeued.previews = result.previews
@@ -721,11 +757,12 @@ final class PracticeSession: ObservableObject {
         typedResults = nil
         written = nil
         reading = nil
+        deeper = false
         shownAt = Date()
         if index >= queue.count { phase = .done }
         if celebrateAfterThisCard {
             celebrateAfterThisCard = false
-            timesUp = true
+            sprintEnded()
         }
     }
 }
@@ -748,6 +785,8 @@ struct PracticeView: View {
     @State private var editUnit = ""
     @AppStorage("extraNewCount") private var aheadCount = 5
     @State private var confirmingDelete = false
+    /// The Wikipedia article for the card on screen, looked up when its note is first opened.
+    @StateObject private var wiki = WikiPick()
 
     private var isDark: Bool { colorScheme == .dark }
     private var primaryText: Color { isDark ? PluckkTheme.Dark.textPrimary : PluckkTheme.Light.textPrimary }
@@ -794,6 +833,21 @@ struct PracticeView: View {
         .onChange(of: session.editing) { isEditing in
             if !isEditing { splitCards = [] }
         }
+        .onChange(of: session.deeper) { open in
+            // The first time it's opened for a card, find its article: the question's words and the answer's.
+            guard open, let item = session.current else { return }
+            wiki.start(cardId: item.card_id, question: item.shownQuestion, answer: item.answer, deck: item.folder?.name)
+        }
+    }
+
+    /// A card's answer is the fact, then (after a blank line) the context that deepens it.
+    private static func fact(of answer: String) -> String {
+        answer.components(separatedBy: "\n\n").first ?? answer
+    }
+
+    private static func context(of answer: String) -> String? {
+        let rest = answer.components(separatedBy: "\n\n").dropFirst().joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.isEmpty ? nil : rest
     }
 
     private func lightbox(_ url: URL) -> some View {
@@ -827,7 +881,7 @@ struct PracticeView: View {
 
             // A card with an image fills the height so the image can use every spare point
             // (and grows with the panel); text-only cards scroll if they run long.
-            if imageShowing(item) && session.reading == nil {
+            if imageShowing(item) && session.reading == nil && !session.deeper {
                 card(item)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
@@ -837,6 +891,10 @@ struct PracticeView: View {
                     ScrollView {
                         VStack(spacing: 14) {
                             card(item)
+                            if session.deeper {
+                                WikiNote(pick: wiki) { session.closeDeeper() }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                             if let reading = session.reading, reading.cardId == item.card_id {
                                 SourceExcerpt(passage: reading) { session.closeReader() }
                                     .id(reading.id)
@@ -895,6 +953,7 @@ struct PracticeView: View {
                     .cornerRadius(4)
             }
             Spacer()
+            SiteGateChip()
             if !session.editing {
                 Button(action: { session.undo() }) {
                     Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .semibold))
@@ -1004,42 +1063,81 @@ struct PracticeView: View {
                         .foregroundColor(response.score >= 0.7 ? PluckkTheme.Dark.success : Color(hex: "e5a14b"))
                 }
                 Rectangle().fill(rule).frame(height: 1)
-                Text(cardMarkdown(item.answer))
+                // The answer stands on its own; its context sits under it, quieter.
+                Text(cardMarkdown(Self.fact(of: item.answer)))
                     .textSelection(.enabled)
-                    .font(.system(size: fittedSize(item.answer) - 1))
+                    .font(.system(size: fittedSize(Self.fact(of: item.answer)) - 1))
                     .foregroundColor(answerText)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
+                if let context = Self.context(of: item.answer) {
+                    Text(cardMarkdown(context))
+                        .textSelection(.enabled)
+                        .font(.system(size: 13 * CGFloat(textScale > 0 ? textScale : 1)))
+                        .foregroundColor(isDark ? PluckkTheme.Dark.textSecondary : PluckkTheme.Light.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
+                }
                 ForEach(Array((item.modules?.reveal ?? []).enumerated()), id: \.offset) { _, module in
                     ModuleSlotView(module: module, slot: .reveal, revealed: true)
                 }
                 if let url = MediaStore.displayURL(item.image_url) {
                     cardImage(url)
                 }
-                if let book = item.bookSource {
-                    Button(action: { session.openReader(item) }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "book").font(.system(size: 10))
-                            Text(session.reading?.cardId == item.card_id ? "Hide the source" : "Read in context · \(book.book)")
-                        }
-                        .font(.system(size: 11))
-                        .foregroundColor(mutedText)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open the passage this card came from, in its chapter")
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 18) { furtherLinks(item) }
+                    VStack(spacing: 8) { furtherLinks(item) }
                 }
-                if let source = item.source_url, let url = URL(string: source), url.scheme?.hasPrefix("http") == true {
-                    Button(action: { NSWorkspace.shared.open(url) }) {
-                        Text("Source · \(url.host ?? source)")
-                            .font(.system(size: 11))
-                            .foregroundColor(mutedText)
-                            .underline()
-                    }
-                    .buttonStyle(.plain)
-                }
+                .padding(.top, 2)
             }
+        }
+    }
+
+    /// Ways further into a card, quiet under the answer: Wikipedia, the book passage it came from,
+    /// its source page. Each opens only when asked for.
+    @ViewBuilder private func furtherLinks(_ item: ReviewItem) -> some View {
+        Button(action: { session.toggleDeeper() }) {
+            HStack(spacing: 5) {
+                Text("W").font(.system(size: 11, weight: .semibold, design: .serif))
+                Text(session.deeper ? "Hide Wikipedia" : WikiPick.remembered(item.card_id).map { "Wikipedia · \($0)" } ?? "Wikipedia")
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11))
+            .foregroundColor(mutedText)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Read about this on Wikipedia (W)")
+        if let book = item.bookSource {
+            Button(action: { session.openReader(item) }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "book").font(.system(size: 10))
+                    Text(session.reading?.cardId == item.card_id ? "Hide the source" : "Read in context · \(book.book)")
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11))
+                .foregroundColor(mutedText)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open the passage this card came from, in its chapter")
+        }
+        if let source = item.source_url, let url = URL(string: source), url.scheme?.hasPrefix("http") == true {
+            Button(action: { NSWorkspace.shared.open(url) }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "link").font(.system(size: 10))
+                    Text("Source · \(url.host ?? source)").lineLimit(1)
+                }
+                .font(.system(size: 11))
+                .foregroundColor(mutedText)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(source)
         }
     }
 
@@ -1428,11 +1526,13 @@ struct PracticeView: View {
 }
 
 /// End of a sprint: "Good job", then the practice-day grid, held briefly, then it fades and the
-/// next card is there again. No buttons and no count to beat; a click skips it.
+/// next card is there again. No count to beat; a click skips it. If the session earned time on
+/// the gated sites, it stays up with the offer until that's taken or passed over.
 struct SprintCelebration: View {
     let onDone: () -> Void
     @State private var showGrid = false
     @State private var finished = false
+    @ObservedObject private var gate = SiteGate.shared
 
     var body: some View {
         VStack(spacing: 18) {
@@ -1444,6 +1544,11 @@ struct SprintCelebration: View {
                 .frame(maxWidth: 320)
                 .opacity(showGrid ? 1 : 0)
                 .offset(y: showGrid ? 0 : 6)
+            if showGrid && (gate.sessionEarned || gate.isOpen) {
+                SiteGateOffer(dayDone: false)
+                Button("Keep practising") { finish() }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
+            }
             Spacer()
         }
         .padding(.horizontal, 24)
@@ -1455,7 +1560,7 @@ struct SprintCelebration: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeOut(duration: 0.35)) { showGrid = true }
             try? await Task.sleep(nanoseconds: 2_350_000_000)
-            finish()
+            if !gate.sessionEarned { finish() }     // earned minutes wait to be taken
         }
     }
 

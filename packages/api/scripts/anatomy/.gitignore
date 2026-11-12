@@ -1,0 +1,5 @@
+src/
+work/
+out/
+.chrome-profile/
+__pycache__/

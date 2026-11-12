@@ -1,6 +1,7 @@
 [
   { "slot": "prompt", "props": { "figure": "skeleton", "highlight": "femur" } },
   { "slot": "prompt", "props": { "figure": "muscles", "highlight": "deltoid" } },
+  { "slot": "prompt", "props": { "figure": "muscles-back", "highlight": "latissimus" } },
   { "slot": "prompt", "props": { "figure": "heart", "highlight": "lv" } },
   { "slot": "prompt", "props": { "figure": "brain", "highlight": "occipital" } },
   { "slot": "prompt", "props": { "figure": "cell", "highlight": "mitochondrion" } },

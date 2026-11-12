@@ -12,6 +12,10 @@ extension Notification.Name {
 /// image, audio or a map ride along with the question or the answer. Module settings appear as a
 /// plain form; their raw props stay behind Advanced. The assistant sees which card is open here
 /// and its changes reload into it.
+///
+/// What you see first is the card's words: question, answer, context, then the line to the
+/// assistant. How it's answered and the extras are folded under Advanced, whose closed line names
+/// whatever is set there.
 struct CardEditorPane: View {
     let cardId: String
     var decks: [DeckSummary] = []
@@ -53,6 +57,7 @@ struct CardEditorPane: View {
     @State private var changedElsewhere = false
     @State private var confirmingDelete = false
     @State private var ask = ""
+    @AppStorage("cardEditor.showAdvanced") private var showAdvanced = false
 
     struct EditableModule: Identifiable, Equatable {
         let id = UUID()
@@ -78,11 +83,12 @@ struct CardEditorPane: View {
                             }
                         }
                         if let notice { Text(notice).font(.system(size: 12)).foregroundColor(PluckkTheme.Dark.warning) }
-                        answering
                         texts
-                        extrasSection
+                        if let url = MediaStore.displayURL(imageURL) { imageRow(url) }
+                        onTheCard
                         splitSection
                         assistantLine
+                        advancedSection
                     }
                     .padding(18)
                 }
@@ -156,11 +162,7 @@ struct CardEditorPane: View {
                 caption(wordsMode == .blanks ? "Click words in the question to hide them; you type each one in Practice."
                         : "You write the whole answer; Claude checks which of its ideas you got across.")
             case .number:
-                HStack(spacing: 8) {
-                    TextField("Number", text: $numberText).textFieldStyle(.roundedBorder).frame(width: 140)
-                    TextField("Unit (e.g. %, km, Mt)", text: $unit).textFieldStyle(.roundedBorder).frame(width: 160)
-                }
-                caption("You give a 95% range; it's scored against this number.")
+                caption("You give a 95% range; it's scored against the number set under the answer.")
             case .interactive:
                 interactiveChoices
             }
@@ -225,6 +227,13 @@ struct CardEditorPane: View {
             }
         } else {
             CardTextField(label: top == .number ? "Answer (as shown)" : "Answer", text: $fact, minLines: 2)
+            if top == .number {
+                HStack(spacing: 8) {
+                    TextField("Number", text: $numberText).textFieldStyle(.roundedBorder).frame(width: 140)
+                    TextField("Unit (e.g. %, km, Mt)", text: $unit).textFieldStyle(.roundedBorder).frame(width: 160)
+                    caption("Your 95% range is scored against this.")
+                }
+            }
         }
         CardTextField(label: "Context (shown after the answer; markdown links work)", text: $context, minLines: 2)
     }
@@ -280,6 +289,49 @@ struct CardEditorPane: View {
         blankWords = picked
     }
 
+    // MARK: Advanced
+
+    /// How it's answered and what else rides on the card (audio, a map, a simulation): rarely
+    /// touched, so folded away. The closed line says what's set, so nothing is hidden silently.
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Button(action: { withAnimation(.easeOut(duration: 0.15)) { showAdvanced.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                    label("Advanced")
+                    if !showAdvanced, let summary = advancedSummary {
+                        Text(summary).font(.system(size: 11)).lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundColor(.secondary)
+            .help("How the card is answered, and audio, maps and other extras")
+            if showAdvanced {
+                answering
+                extrasSection
+            }
+        }
+    }
+
+    /// What Advanced holds for this card, when it's anything but plain recall with no extras.
+    private var advancedSummary: String? {
+        func name(_ use: String, respond: Bool) -> String {
+            catalogue.first { $0["use"] as? String == use }.map { title(of: $0, respond: respond) } ?? use
+        }
+        var bits: [String] = []
+        switch top {
+        case .recall: break
+        case .words: bits.append(wordsMode == .blanks ? "Typed blanks" : "Written answer")
+        case .number: bits.append("Number")
+        case .interactive: bits.append(respond.map { name($0.use, respond: true) } ?? "Interactive")
+        }
+        bits += extras.map { name($0.use, respond: false) }
+        return bits.isEmpty ? nil : bits.joined(separator: " · ")
+    }
+
     // MARK: Extras: image and modules
 
     private var extrasSection: some View {
@@ -303,10 +355,9 @@ struct CardEditorPane: View {
                 } label: { Label("Add", systemImage: "plus").font(.system(size: 12)) }
                     .menuStyle(.borderlessButton).fixedSize()
             }
-            if imageURL == nil && extras.isEmpty {
-                caption("Nothing yet. Add an image, audio, a map or a simulation to show with the question or the answer.")
+            if extras.isEmpty {
+                caption("Add an image, audio, a map or a simulation to show with the question or the answer.")
             }
-            if let url = MediaStore.displayURL(imageURL) { imageRow(url) }
             ForEach(extras) { m in attachmentRow(m, placement: true) }
         }
     }
@@ -336,8 +387,33 @@ struct CardEditorPane: View {
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.03)))
     }
 
-    /// One module on the card as a person sees it: what it is, where it shows, its settings as a
-    /// form, a live preview. Raw props only under Advanced.
+    /// What the card shows beyond its words: each module live, as it appears in Practice (the
+    /// diagram to click, the map, the audio), so the card can be seen while it's edited. Their
+    /// settings are under Advanced, and a change there redraws these.
+    @ViewBuilder private var onTheCard: some View {
+        let shown = (top == .interactive ? [respond].compactMap { $0 } : []) + extras
+        if !shown.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                label("On the card")
+                ForEach(shown) { m in
+                    ModulePreviewDebounced(use: m.use, propsText: m.propsText, slot: m.slot, src: source(for: m.use), title: previewTitle(m))
+                }
+            }
+        }
+    }
+
+    /// "Click on the body · how you answer", "Read aloud · with the question".
+    private func previewTitle(_ m: EditableModule) -> String {
+        let name = catalogue.first { $0["use"] as? String == m.use }.map { title(of: $0, respond: m.slot == .respond) } ?? m.use
+        switch m.slot {
+        case .respond: return "\(name) · how you answer"
+        case .prompt: return "\(name) · with the question"
+        case .reveal: return "\(name) · with the answer"
+        }
+    }
+
+    /// One module's settings: what it is, where it shows, and its settings as a form (raw props
+    /// behind the form's own Advanced). Its live preview is above, with the card's words.
     private func attachmentRow(_ m: EditableModule, placement: Bool) -> some View {
         let manifest = catalogue.first { $0["use"] as? String == m.use }
         let props = parse(m.propsText)
@@ -356,14 +432,10 @@ struct CardEditorPane: View {
                 Button(action: { remove(m) }) { Image(systemName: "trash").font(.system(size: 11)) }
                     .buttonStyle(.plain).foregroundColor(.secondary).help("Remove")
             }
-            HStack(alignment: .top, spacing: 12) {
-                ModuleSettingsForm(schema: manifest?["props"] as? [String: Any], propsText: Binding(
-                    get: { current(m)?.propsText ?? m.propsText },
-                    set: { text in update(m) { $0.propsText = text } }))
-                    .frame(minWidth: 220, maxWidth: 300, alignment: .leading)
-                ModulePreviewDebounced(use: m.use, propsText: m.propsText, slot: m.slot, src: source(for: m.use))
-                    .frame(maxWidth: .infinity)
-            }
+            ModuleSettingsForm(schema: manifest?["props"] as? [String: Any], propsText: Binding(
+                get: { current(m)?.propsText ?? m.propsText },
+                set: { text in update(m) { $0.propsText = text } }))
+                .frame(maxWidth: 420, alignment: .leading)
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.03)))
@@ -571,7 +643,7 @@ struct CardEditorPane: View {
         let a = storedAnswer
         guard !q.isEmpty, !a.isEmpty else { notice = "A card needs a question and an answer."; return }
         if isBlanks && blankWords.isEmpty { notice = "Pick at least one word to hide, or choose another way to answer."; return }
-        if top == .interactive && respond == nil { notice = "Pick how it's answered, or choose another way."; return }
+        if top == .interactive && respond == nil { showAdvanced = true; notice = "Pick how it's answered, or choose another way."; return }
         var body: [String: Any] = ["question": q, "answer": a, "tags": tags]
         switch top {
         case .number:
@@ -595,7 +667,7 @@ struct CardEditorPane: View {
             let list = extras.filter { $0.slot == slot }.compactMap(use)
             if !list.isEmpty { slots[slot.rawValue] = list }
         }
-        if let broken { notice = "The settings of \(broken) need fixing (under Advanced)."; return }
+        if let broken { showAdvanced = true; notice = "The settings of \(broken) need fixing (under Advanced)."; return }
         body["modules"] = slots.isEmpty ? NSNull() : slots
         let newCards = splits.filter { !$0.question.trimmingCharacters(in: .whitespaces).isEmpty && !$0.answer.trimmingCharacters(in: .whitespaces).isEmpty }
         let deck = folderId
@@ -759,12 +831,13 @@ struct ModulePreviewDebounced: View {
     let propsText: String
     let slot: ModuleSlot
     let src: String?
+    var title = "Preview"
     @State private var shown: String?
 
     var body: some View {
         Group {
             if let shown, let data = shown.data(using: .utf8), let props = try? JSONDecoder().decode(JSONValue.self, from: data) {
-                ModulePreview(module: ModuleUse(use: use, props: props, src: src), slot: slot, title: "Preview")
+                ModulePreview(module: ModuleUse(use: use, props: props, src: src), slot: slot, title: title)
                     .id(shown)
             } else {
                 Text("Preview appears when the settings are complete.").font(.system(size: 11)).foregroundColor(.secondary)

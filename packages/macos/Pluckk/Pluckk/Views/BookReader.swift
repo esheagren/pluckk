@@ -410,10 +410,9 @@ struct SourceExcerpt: View {
 
     private var isDark: Bool { colorScheme == .dark }
 
-    enum Tab: String, CaseIterable { case passage = "Passage", book = "In the book", wikipedia = "Wikipedia" }
+    /// Wikipedia has its own note under the card (WikiNote), for every card, not only book ones.
+    enum Tab: String, CaseIterable { case passage = "Passage", book = "In the book" }
     @State private var tab = Tab.passage
-
-    @StateObject private var wiki = WikiPick()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -421,14 +420,10 @@ struct SourceExcerpt: View {
             switch tab {
             case .passage: passageView
             case .book: BookEvidenceView(passage: passage, isDark: isDark, textScale: textScale)
-            case .wikipedia: WikiContent(pick: wiki)
             }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
-        .onChange(of: tab) { t in
-            if t == .wikipedia { wiki.start(cardId: passage.cardId, query: passage.query ?? passage.selection ?? passage.book.title) }
-        }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(isDark ? Color(hex: "151412") : Color(hex: "fbf8f2")))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
@@ -456,16 +451,14 @@ struct SourceExcerpt: View {
         }
     }
 
-    /// Everything on one line: the book and chapter, the tabs, and on Wikipedia the article picker.
+    /// Everything on one line: the book and chapter, and the tabs.
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "book").font(.system(size: 11)).foregroundColor(.secondary)
             Text(passage.book.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 .layoutPriority(1)
                 .help(passage.book.title + (passage.chapterTitle.isEmpty ? "" : " · " + passage.chapterTitle))
-            if tab != .wikipedia {
-                Text(passage.chapterTitle).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
-            }
+            Text(passage.chapterTitle).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -473,7 +466,6 @@ struct SourceExcerpt: View {
             .labelsHidden()
             .controlSize(.small)
             .fixedSize()
-            if tab == .wikipedia { WikiControls(pick: wiki) }
             if let page = passage.page, tab == .passage {
                 Text("p. \(page)")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
@@ -647,62 +639,361 @@ struct BookEvidenceView: View {
     }
 }
 
-// MARK: - Wikipedia beside the book
+// MARK: - Choosing the article
 
-/// The Wikipedia article for a card, chosen by searching for its question and answer. A different
-/// article can be picked or searched for; the choice is kept for that card.
-@MainActor
-final class WikiPick: ObservableObject {
-    @Published var title: String?
-    @Published var candidates: [String] = []
-    @Published var problem: String?
-    private var cardId: String?
-    private var started: String?
-
-    private var storeKey: String? { cardId.map { "wikipedia.\($0)" } }
-
-    func start(cardId: String?, query: String) {
-        let key = cardId ?? query
-        guard started != key else { return }
-        started = key
-        self.cardId = cardId
-        title = storeKey.flatMap { UserDefaults.standard.string(forKey: $0) }
-        Task { await search(Self.searchable(query), pickFirst: title == nil) }
+/// Works out which Wikipedia article a card is about. Wikipedia's search wants every word of a
+/// query to be in the page, so a card's whole text finds nothing useful; a few well-chosen words
+/// do. So: a short answer is a name and is searched first ("Cerebellum", "Norman Rockwell"); else
+/// a proper name in the question ("No Child Left Behind"), then the question's own subject words.
+/// Each result is scored by how much of its title is in the card's words, and a card whose best
+/// result shares none is left without an article rather than given a wrong one.
+enum WikiMatch {
+    struct Hit {
+        let title: String
+        let redirect: String?
+        /// A "may refer to" page: a list of senses, not an article.
+        var refersToMany = false
     }
 
-    func choose(_ t: String) {
-        title = t
-        if let key = storeKey { UserDefaults.standard.set(t, forKey: key) }
+    struct Scored {
+        let title: String
+        let score: Double
+        /// How well the title itself fits the card, before its place in the search counts.
+        let fit: Double
+        /// Good enough to stop searching.
+        let sure: Bool
+        /// A "may refer to" page, and how well its title fitted before that counted against it.
+        let refersToMany: Bool
+        let titleFit: Double
+
+        /// Enough of the title is the card's own words to show it unasked.
+        var plausible: Bool { fit >= 1.5 }
     }
 
-    func search(_ text: String, pickFirst: Bool) async {
-        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, var c = URLComponents(string: "https://en.wikipedia.org/w/api.php") else { return }
-        c.queryItems = [.init(name: "action", value: "query"), .init(name: "list", value: "search"), .init(name: "srsearch", value: q),
-                        .init(name: "srlimit", value: "8"), .init(name: "format", value: "json")]
-        guard let url = c.url else { return }
-        var request = URLRequest(url: url)
-        request.setValue("Pluckk/1.0 (spaced-repetition app)", forHTTPHeaderField: "User-Agent")
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let found = ((json?["query"] as? [String: Any])?["search"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
-            if !found.isEmpty { candidates = found }
-            if pickFirst, let first = found.first { choose(first); problem = nil }
-            if found.isEmpty && title == nil { problem = "No Wikipedia article matched. Try the search box." }
-        } catch {
-            if title == nil { problem = "Couldn't reach Wikipedia." }
+    struct Plan {
+        let queries: [String]
+        /// Tried only if `queries` find nothing plausible.
+        let fallback: [String]
+        let card: Set<String>
+        /// Pieces of the card's hyphenated words ("coordination" in "stabilization-before-
+        /// coordination"): a weaker match than a word of its own.
+        let pieces: Set<String>
+        let subject: Set<String>
+        let clause: Set<String>
+        /// The answer is a short name or term, so it (not the question) names the article.
+        let named: Bool
+        /// A name's first word, the one that makes it that name ("Matthew" in "Matthew principle").
+        let lead: Set<String>
+        /// The deck's name as search words: it says which sense of an ambiguous name is meant
+        /// ("Title I" in Education Policy).
+        let context: String
+    }
+
+    private static let stop: Set<String> = Set("""
+    what which who whom whose why how when where does did do is are was were the a an of in on to for and or as by \
+    with that this these those their his her its it be been being according about from into than then they them he she you your \
+    at not can could would should will may might has have had one two per each most more less very also only such both \
+    click name highlighted part show select identify point type following called term word mean means meaning many much \
+    roughly approximately around interval range percent give state describe explain define tell
+    """.split(separator: " ").map(String.init))
+
+    /// The words that carry meaning, in order: no small words, no instructions ("click", "name the
+    /// highlighted"), no blanks or markdown. A lone capital or digit stays ("Title I", "Type 2").
+    static func words(_ text: String) -> [String] {
+        var t = text
+        t = t.replacingOccurrences(of: #"\([^)]*%[^)]*\)"#, with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"_{2,}"#, with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "’", with: "'")
+        t = t.replacingOccurrences(of: #"'s\b"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"[^\p{L}\p{N}\s\-–.]"#, with: " ", options: .regularExpression)
+        return t.split(whereSeparator: { $0.isWhitespace })
+            .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: ".-–")) }
+            .filter { w in
+                guard let first = w.first, !stop.contains(w.lowercased()) else { return false }
+                return w.count > 1 || first.isUppercase || first.isNumber
+            }
+    }
+
+    /// The same words in lower case, for comparing; a hyphenated word also counts as its parts
+    /// ("error-based" matches "error").
+    private static func lowered(_ text: String) -> [String] {
+        words(text).flatMap { word -> [String] in
+            let w = word.lowercased()
+            let parts = w.split(whereSeparator: { $0 == "-" || $0 == "–" }).map(String.init).filter { $0.count > 1 && !stop.contains($0) }
+            return parts.count > 1 ? [w] + parts : [w]
         }
     }
 
-    /// Search text from a card: its answer and question's words, without the small words that only
-    /// dilute a search.
-    static func searchable(_ text: String) -> String {
-        let stop: Set<String> = ["what","which","who","why","how","when","where","does","did","do","is","are","was","were","the","a","an","of","in","on","to","for","and","or","as","by","with","that","this","their","his","her","its","it","be","according","about","from","into","than","then","they","them","he","she"]
-        let words = text.replacingOccurrences(of: #"[^\p{L}\p{N}\s-]"#, with: " ", options: .regularExpression)
-            .split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            .filter { !stop.contains($0.lowercased()) && $0.count > 1 }
-        return words.prefix(12).joined(separator: " ")
+    /// A title's words for matching: hyphenated ones as their parts only.
+    private static func titleWords(_ text: String) -> [String] {
+        words(text).flatMap { word -> [String] in
+            let parts = word.lowercased().split(whereSeparator: { $0 == "-" || $0 == "–" }).map(String.init).filter { $0.count > 1 && !stop.contains($0) }
+            return parts.isEmpty ? [word.lowercased()] : parts
+        }
+    }
+
+    /// The answer's crisp part: its first line, without a bracketed aside, up to a colon, comma or
+    /// dash ("Nucleus: the large body…" gives "Nucleus"), or else its first sentence.
+    static func clause(_ answer: String) -> String {
+        let fact = (answer.components(separatedBy: "\n\n").first ?? answer)
+        var line = (fact.components(separatedBy: "\n").first ?? fact)
+            .replacingOccurrences(of: #"\([^)]*\)"#, with: " ", options: .regularExpression)
+        if let cut = line.range(of: #"[:;,—]|\s-\s"#, options: .regularExpression), line.distance(from: line.startIndex, to: cut.lowerBound) <= 60 {
+            line = String(line[..<cut.lowerBound])
+        } else if let end = line.range(of: #"(?<=[.!?])\s"#, options: .regularExpression) {
+            line = String(line[..<end.lowerBound])
+        }
+        return line.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The longest proper name in a question: a run of capitalised words, small joining words
+    /// allowed inside it ("Race to the Top"). A capital that only starts the sentence doesn't
+    /// count, nor does a two-letter one on its own ("US").
+    static func properName(_ question: String) -> String? {
+        let joiners: Set<String> = ["of", "the", "to", "and", "for", "in", "de", "la", "von", "van", "du"]
+        let tokens = question.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var best: [String] = [], run: [String] = [], held: [String] = []
+        func close() {
+            if run.count > best.count || (run.count == best.count && run.joined().count > best.joined().count) { best = run }
+            run = []; held = []
+        }
+        for (i, raw) in tokens.enumerated() {
+            let w = raw.trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.symbols))
+            let ends = raw.last.map { ",;:?!.)".contains($0) } ?? false
+            let capital = w.first?.isUppercase == true
+            let opener = i == 0 && (stop.contains(w.lowercased()) || !(tokens.count > 1 && tokens[1].first?.isUppercase == true))
+            if capital && !opener {
+                run += held + [w]; held = []
+            } else if !run.isEmpty && joiners.contains(w.lowercased()) && !ends {
+                held.append(w)
+            } else {
+                close()
+            }
+            if ends { close() }
+        }
+        close()
+        guard !best.isEmpty, best.count > 1 || best[0].count >= 4 else { return nil }
+        return best.joined(separator: " ")
+    }
+
+    static func plan(question: String, answer: String, deck: String? = nil) -> Plan {
+        let subject = Array(words(question).prefix(6))
+        let part = clause(answer)
+        let clauseWords = Array(words(part).prefix(5))
+        let numeric = part.contains(where: \.isNumber)
+        // A name is short and isn't a description: "Cerebellum", "The Bagrationi dynasty", but not
+        // "A one-in-a-million chance of death".
+        let raw = part.split(whereSeparator: { $0.isWhitespace }).map { $0.lowercased() }
+        let named = !numeric && (1...4).contains(clauseWords.count) && raw.count <= 4 && !["a", "an"].contains(raw.first ?? "")
+        let seen = Set(subject.map { $0.lowercased() })
+        let both = Array(subject.prefix(4)) + (numeric ? [] : clauseWords.filter { !seen.contains($0.lowercased()) }.prefix(2))
+        let proper = properName(question)
+        func distinct(_ list: [String], besides: [String] = []) -> [String] {
+            var out: [String] = []
+            for q in list where !q.isEmpty && !(out + besides).contains(where: { $0.caseInsensitiveCompare(q) == .orderedSame }) { out.append(q) }
+            return out
+        }
+        // A named answer is searched on its own; the question only if that finds nothing.
+        let queries = distinct(named ? [clauseWords.joined(separator: " ")]
+                                     : [proper ?? "", subject.joined(separator: " "), both.joined(separator: " ")])
+        let fallback = named ? distinct([proper ?? "", subject.joined(separator: " ")], besides: queries) : []
+        let fact = answer.components(separatedBy: "\n\n").first ?? answer
+        let whole = Set(words(question + " " + fact).map { $0.lowercased() })
+        return Plan(queries: queries, fallback: fallback, card: whole, pieces: Set(lowered(question + " " + fact)).subtracting(whole), subject: Set(lowered(subject.joined(separator: " "))),
+                    clause: Set(lowered(clauseWords.joined(separator: " "))), named: named,
+                    lead: named ? Set(lowered(clauseWords.first ?? "")) : [],
+                    context: words(deck ?? "").prefix(3).joined(separator: " "))
+    }
+
+    /// How well a search result fits the card. `rank` is its place in its search, `query` which
+    /// search it came from (earlier ones are the better guesses).
+    static func score(_ hit: Hit, rank: Int, query: Int, plan: Plan) -> Scored {
+        var best = 0.0, sure = false
+        for name in [hit.title, hit.redirect].compactMap({ $0 }) {
+            // "Radius (bone)": the bracket says which sense. It helps if the card says "bone" too,
+            // and counts against the title if it doesn't ("Tiresias (typeface)").
+            let aside = name.range(of: #"\(([^)]*)\)"#, options: .regularExpression).map { titleWords(String(name[$0])) } ?? []
+            let main = titleWords(name.replacingOccurrences(of: #"\([^)]*\)"#, with: " ", options: .regularExpression))
+            guard !main.isEmpty else { continue }
+            let hits = main.reduce(0.0) { $0 + (plan.card.contains($1) ? 1 : plan.pieces.contains($1) ? 0.5 : 0) }
+            let cover = hits / Double(main.count)
+            var s = cover * 3 + hits * 0.6 * cover
+            let title = Set(main)
+            // The title is the answer: it holds the whole answer, or is a good part of it.
+            let isAnswer = plan.named && !plan.clause.isEmpty
+                && (plan.clause.isSubset(of: title) || (title.isSubset(of: plan.clause) && title.count * 2 >= plan.clause.count))
+            if isAnswer { s += 2.5 }
+            // Sharing only a name's common word isn't a match ("Gaia principle" for "Matthew principle").
+            if plan.named, cover < 1, !plan.lead.isEmpty, !main.contains(where: plan.lead.contains) { s = min(s, 1) }
+            if !plan.named { s += Double(main.filter(plan.subject.contains).count) * 0.5 }
+            let otherSense = !aside.isEmpty && !aside.contains(where: plan.card.contains)
+            if !aside.isEmpty { s += otherSense ? -3 : 1 }
+            if s > best {
+                best = s
+                sure = cover == 1 && !otherSense && (isAnswer || hits >= 2)
+            }
+        }
+        var fit = best
+        let many = hit.refersToMany || hit.title.localizedCaseInsensitiveContains("disambiguation")
+        if many { fit -= 3; sure = false }
+        return Scored(title: hit.title, score: fit + (1 - Double(rank) * 0.12) * (query == 0 ? 1 : 0.8), fit: fit, sure: sure,
+                      refersToMany: many, titleFit: best)
+    }
+}
+
+// MARK: - Wikipedia under a card
+
+/// The Wikipedia article for a card, chosen by searching for its question and answer. A different
+/// article can be picked or searched for; the choice is kept for that card. Nothing is sent to
+/// Wikipedia until the note is opened: a card's words stay on this Mac otherwise.
+@MainActor
+final class WikiPick: ObservableObject {
+    /// The article's opening, as Wikipedia's summary gives it.
+    struct Summary: Equatable {
+        let extract: String
+        let description: String?
+        let thumbnail: URL?
+    }
+
+    @Published var title: String?
+    @Published var candidates: [String] = []
+    @Published var problem: String?
+    @Published var summary: Summary?
+    private var cardId: String?
+    private var started: String?
+
+    private var storeKey: String? { cardId.map { Self.storeKey($0) } }
+    private static func storeKey(_ cardId: String) -> String { "wikipedia.\(cardId)" }
+
+    /// The article already chosen for a card, if it has been looked up before.
+    static func remembered(_ cardId: String) -> String? { UserDefaults.standard.string(forKey: storeKey(cardId)) }
+
+    /// Open on a card: its remembered article if it has one, and either way the articles that fit it.
+    func start(cardId: String, question: String, answer: String, deck: String?) {
+        guard started != cardId else { return }
+        started = cardId
+        self.cardId = cardId
+        candidates = []
+        problem = nil
+        summary = nil
+        title = storeKey.flatMap { UserDefaults.standard.string(forKey: $0) }
+        if let title { Task { await loadSummary(title) } }
+        let plan = WikiMatch.plan(question: question, answer: answer, deck: deck)
+        Task { await find(plan) }
+    }
+
+    /// Show an article and remember it for the card: the person's choice, or the best fit found.
+    func choose(_ t: String) {
+        guard t != title || summary == nil else { return }
+        title = t
+        summary = nil
+        problem = nil
+        if let key = storeKey { UserDefaults.standard.set(t, forKey: key) }
+        Task { await loadSummary(t) }
+    }
+
+    /// Runs the card's searches, best guess first, stopping at the first sure match. Picks the
+    /// best-fitting article unless one is already remembered, and lists the rest to choose from.
+    private func find(_ plan: WikiMatch.Plan) async {
+        let asked = started          // the card this is for; another may be showing by the time it answers
+        var best: [String: WikiMatch.Scored] = [:]
+        var reached = false
+        for (index, query) in (plan.queries + plan.fallback).enumerated() {
+            // The fallback searches are only for when the first ones found nothing that fits.
+            if index >= plan.queries.count, best.values.contains(where: \.plausible) { break }
+            if index > 0 { try? await Task.sleep(nanoseconds: 300_000_000) }     // gently: Wikipedia limits bursts
+            guard asked == started else { return }
+            guard let hits = await Self.hits(query) else { continue }
+            reached = true
+            for (rank, hit) in hits.enumerated() {
+                let scored = WikiMatch.score(hit, rank: rank, query: index, plan: plan)
+                if scored.score > (best[hit.title]?.score ?? -.infinity) { best[hit.title] = scored }
+            }
+            if best.values.contains(where: \.sure) { break }
+        }
+        guard asked == started else { return }
+        var ranked = best.values.sorted { $0.score > $1.score }
+        // The best-fitting title is a "may refer to" page ("Title I"): the deck says which sense is
+        // meant, so search for it with the deck's name and take what comes first.
+        if let many = best.values.filter(\.refersToMany).max(by: { $0.titleFit < $1.titleFit }),
+           many.titleFit >= (ranked.first(where: { !$0.refersToMany })?.titleFit ?? 0), !plan.context.isEmpty {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let name = many.title.replacingOccurrences(of: #"\s*\([^)]*\)"#, with: "", options: .regularExpression)
+            let senses = await Self.hits("\(name) \(plan.context)")
+            guard asked == started else { return }
+            if let sense = senses?.first(where: { !$0.refersToMany }) {
+                ranked.removeAll { $0.title == sense.title }
+                ranked.insert(WikiMatch.Scored(title: sense.title, score: .infinity, fit: .infinity, sure: true, refersToMany: false, titleFit: 0), at: 0)
+            }
+        }
+        candidates = ranked.prefix(8).map(\.title)
+        guard title == nil else { return }
+        if let top = ranked.first, top.plausible {
+            choose(top.title)
+        } else {
+            problem = !reached ? "Couldn't reach Wikipedia. Try again in a moment."
+                : ranked.isEmpty ? "No Wikipedia article matched. Search for one above."
+                : "No article clearly matches this card. Pick one from the list above, or search."
+        }
+    }
+
+    /// The search box: whatever was typed, its first result.
+    func search(_ text: String, pickFirst: Bool) async {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        let asked = started
+        let hits = await Self.hits(q)
+        guard asked == started else { return }
+        guard let found = hits?.map(\.title) else {
+            if title == nil { problem = "Couldn't reach Wikipedia. Try again in a moment." }
+            return
+        }
+        if !found.isEmpty { candidates = found }
+        if pickFirst, let first = found.first { choose(first) }
+        if found.isEmpty && title == nil { problem = "No Wikipedia article matched that search." }
+    }
+
+    /// One search's results, or nil if Wikipedia couldn't be reached (or said to slow down).
+    nonisolated private static func hits(_ query: String) async -> [WikiMatch.Hit]? {
+        guard var c = URLComponents(string: "https://en.wikipedia.org/w/api.php") else { return nil }
+        // The same search twice in one request: once as a list (which says what redirect matched),
+        // once as pages (which says whether each is a "may refer to" page).
+        c.queryItems = [.init(name: "action", value: "query"), .init(name: "list", value: "search"), .init(name: "srsearch", value: query),
+                        .init(name: "srlimit", value: "8"), .init(name: "srprop", value: "redirecttitle"),
+                        .init(name: "generator", value: "search"), .init(name: "gsrsearch", value: query), .init(name: "gsrlimit", value: "8"),
+                        .init(name: "prop", value: "pageprops"), .init(name: "ppprop", value: "disambiguation"), .init(name: "format", value: "json")]
+        guard let url = c.url, let (data, response) = try? await URLSession.shared.data(for: request(url)),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let found = json["query"] as? [String: Any]
+        let many = Set((found?["pages"] as? [String: [String: Any]] ?? [:]).values
+            .filter { ($0["pageprops"] as? [String: Any])?["disambiguation"] != nil }
+            .compactMap { $0["title"] as? String })
+        return (found?["search"] as? [[String: Any]] ?? []).compactMap { row in
+            (row["title"] as? String).map { WikiMatch.Hit(title: $0, redirect: row["redirecttitle"] as? String, refersToMany: many.contains($0)) }
+        }
+    }
+
+    /// The article's opening paragraph, its one-line description and a picture, for the note.
+    private func loadSummary(_ t: String) async {
+        let name = t.replacingOccurrences(of: " ", with: "_")
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        guard let path = name.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(path)") else { return }
+        guard let (data, _) = try? await URLSession.shared.data(for: Self.request(url)), title == t,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        let extract = (json["extract"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let thumb = ((json["thumbnail"] as? [String: Any])?["source"] as? String).flatMap(URL.init(string:))
+        summary = Summary(extract: extract.isEmpty ? "Wikipedia has no summary for this article. Open the whole article below." : extract,
+                          description: json["description"] as? String, thumbnail: thumb)
+    }
+
+    nonisolated private static func request(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue("Pluckk/1.0 (spaced-repetition app)", forHTTPHeaderField: "User-Agent")
+        return request
     }
 
     static func url(_ title: String, mobile: Bool) -> URL? {
@@ -711,7 +1002,85 @@ final class WikiPick: ObservableObject {
     }
 }
 
-/// The article picker, search and open-in-browser, for the reader's one header line.
+/// Wikipedia under a card, a step at a time: the article's opening paragraph first, the whole
+/// article on request. The article can be swapped (other matches, or a search), and the choice is
+/// remembered for the card.
+struct WikiNote: View {
+    @ObservedObject var pick: WikiPick
+    let onClose: () -> Void
+    @State private var whole = false
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(CardTextScale.key) private var textScale = 1.0
+
+    private var isDark: Bool { colorScheme == .dark }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("W").font(.system(size: 14, weight: .semibold, design: .serif)).foregroundColor(.secondary)
+                    .help("Wikipedia")
+                WikiControls(pick: pick)
+                Spacer(minLength: 8)
+                Button(action: onClose) { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    .help("Hide Wikipedia (W or Esc)")
+            }
+            if let problem = pick.problem {
+                Text(problem).font(.system(size: 12)).foregroundColor(.secondary)
+            } else if whole {
+                WikiContent(pick: pick)
+            } else if let summary = pick.summary {
+                opening(summary)
+            } else {
+                ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
+            }
+            if pick.problem == nil, pick.title != nil {
+                Button(action: { withAnimation(.easeOut(duration: 0.18)) { whole.toggle() } }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold))
+                        Text(whole ? "Back to the opening paragraph" : "Read the whole article")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(isDark ? Color(hex: "151412") : Color(hex: "fbf8f2")))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    /// The article's one-line description, its opening paragraph, and its picture beside them.
+    private func opening(_ summary: WikiPick.Summary) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let description = summary.description, !description.isEmpty {
+                    Text(description.prefix(1).uppercased() + description.dropFirst())
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                Text(summary.extract)
+                    .font(.system(size: 15 * CGFloat(textScale > 0 ? textScale : 1), design: .serif))
+                    .lineSpacing(5)
+                    .foregroundColor(isDark ? Color(hex: "e6e1d8") : Color(hex: "2b2925"))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let thumbnail = summary.thumbnail {
+                AsyncImage(url: thumbnail) { $0.resizable().aspectRatio(contentMode: .fit) } placeholder: { Color.clear }
+                    .frame(maxWidth: 150, maxHeight: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+}
+
+/// The article picker, search and open-in-browser, on the note's one header line.
 struct WikiControls: View {
     @ObservedObject var pick: WikiPick
     @State private var searchText = ""
@@ -721,7 +1090,8 @@ struct WikiControls: View {
             Menu {
                 ForEach(pick.candidates, id: \.self) { t in Button(t) { pick.choose(t) } }
             } label: {
-                Text(pick.title ?? "Finding an article…").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(pick.title ?? (pick.problem == nil ? "Finding an article…" : "Choose an article"))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

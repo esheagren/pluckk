@@ -9,3 +9,5 @@ export * from './forecast.js';
 export * from './difficulty.js';
 export * from './learning.js';
 export * from './offline.js';
+export * from './day.js';
+export * from './gate.js';
