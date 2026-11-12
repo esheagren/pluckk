@@ -18,9 +18,13 @@ final class SiteGate: ObservableObject {
     static let sitesKey = "siteGate.sites"
     static let minutesKey = "siteGate.minutes"
     static let defaultSites = "youtube.com, x.com, twitter.com"
-    static let defaultMinutes = 5
+    /// The rate: ten cards open the sites for twenty-five minutes (Settings changes the minutes).
+    static let defaultMinutes = 25
     /// Cards to rate after a window before the next one can be earned.
     static let cardsPerWindow = 10
+    /// Fewer count when they clear everything that was waiting: finishing is finishing. Not
+    /// none, so a single card bouncing back every few minutes doesn't earn a window.
+    static let batchCards = 5
     private static let untilKey = "siteGate.unlockedUntil"
     private static let sinceKey = "siteGate.reviewsSinceWindow"
     private static let usedTodayKey = "siteGate.windowDay"
@@ -29,7 +33,7 @@ final class SiteGate: ObservableObject {
     private static let leftSinceKey = "siteGate.leftSinceWindow"
     /// What a practice session must be to earn a window (the same numbers as core's gate.ts).
     static let sessionMinutes = 4
-    static let sessionCards = 5
+    static let sessionCards = 10
 
     /// Where a blocked tab goes.
     static let blockPage = "\(Config.backendURL)/blocked.html"
@@ -72,7 +76,7 @@ final class SiteGate: ObservableObject {
     /// (A handful, not none, so one card bouncing back every few minutes doesn't earn a window.)
     var cardsToNextWindow: Int {
         let usedToday = defaults.string(forKey: Self.usedTodayKey) == Self.today()
-        let needed = leftSinceWindow ? Self.sessionCards : Self.cardsPerWindow
+        let needed = leftSinceWindow ? Self.batchCards : Self.cardsPerWindow
         return usedToday ? max(0, needed - reviewsSinceWindow) : 0
     }
 
@@ -433,7 +437,7 @@ struct SiteGateOffer: View {
                         .font(.system(size: 12)).foregroundColor(.secondary)
                 } else if gate.finishedToday {
                     // The day was done once; what's here now is the next batch.
-                    Text("Today's cards are done. A practice session of \(SiteGate.sessionMinutes) minutes or more earns \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or ")).")
+                    Text("Today's cards are done. A practice session of \(SiteGate.sessionMinutes) minutes and \(SiteGate.sessionCards) cards earns \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or ")).")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .multilineTextAlignment(.center).frame(maxWidth: 380)
                 } else {

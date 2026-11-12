@@ -1003,7 +1003,7 @@ router.on('POST', 'media', authed(async (req, res, user) => {
 }));
 
 // ---------------------------------------------------------------- site passes
-// The Mac app's "Open x.com for 5 minutes" also has to satisfy Erik's Learn Gate extension in
+// The Mac app's "Open x.com for 25 minutes" also has to satisfy Erik's Learn Gate extension in
 // Chrome. The app asks for a pass, which is only issued once nothing is due and today's new cards
 // are done, signed so it can't be made up; Learn Gate checks it here before unlocking.
 

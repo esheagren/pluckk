@@ -341,7 +341,7 @@ struct SiteGateSettings: View {
                 .disabled(!enabled)
             Stepper("Finishing opens them for \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
                 .disabled(!enabled)
-            Text("Works in Chrome, Brave, Edge, Arc and Safari while Pluckk is running. Finishing what's due earns a window, and so does clearing a later batch (\(SiteGate.sessionCards) cards or more); with nothing left, \(SiteGate.cardsPerWindow) added cards earn another. Mid-batch, once the day has been finished, a practice session of \(SiteGate.sessionMinutes) minutes or more earns one. Going to the site spends it. macOS asks once per browser to let Pluckk control it. Turn on Launch at login below so the gate is always up.")
+            Text("Works in Chrome, Brave, Edge, Arc and Safari while Pluckk is running. \(SiteGate.cardsPerWindow) cards earn a window: added cards once nothing's left, or (once the day has been finished) a practice session of \(SiteGate.sessionMinutes) minutes or more. Finishing everything that's due earns one too, the first time each day and again after a later batch of \(SiteGate.batchCards) cards or more. Going to the site spends it. macOS asks once per browser to let Pluckk control it. Turn on Launch at login below so the gate is always up.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             if let problem = gate.permissionProblem {

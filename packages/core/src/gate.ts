@@ -5,8 +5,8 @@
 /** A session-earned window needs a timed session at least this long. */
 export const SESSION_PASS_MINUTES = 4;
 
-/** ...with at least this many cards rated in it. */
-export const SESSION_PASS_REVIEWS = 5;
+/** ...with at least this many cards rated in it: the gate's rate is ten cards for a window. */
+export const SESSION_PASS_REVIEWS = 10;
 
 /**
  * How far back the server looks for those ratings when asked for a session's pass. Generous,
