@@ -111,27 +111,47 @@ final class SiteGate: ObservableObject {
     /// Open the gate for the earned minutes, and the site itself in the default browser.
     /// `bySession`: the window was earned by a practice session rather than a finished day.
     func open(site: String, bySession: Bool = false) {
-        let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
-        unlockedUntil = until
-        now = Date()
-        reviewsSinceWindow = 0
-        defaults.set(until, forKey: Self.untilKey)
-        defaults.set(0, forKey: Self.sinceKey)
-        defaults.set(Self.today(), forKey: Self.usedTodayKey)
-        defaults.removeObject(forKey: Self.sessionDayKey)      // a session's window is used once
+        guard !opening else { return }
+        opening = true
+        passProblem = nil
         let minutes = self.minutes
-        // Through Pluckk's pass page with a signed pass, so the Learn Gate extension in Chrome
-        // opens too; if no pass can be had, straight to the site.
         Task {
-            var target = URL(string: "https://\(site)")
+            defer { opening = false }
+            // A signed pass from Pluckk's server, so the Learn Gate extension in Chrome opens too.
+            var signed: String?
             if let token = AuthManager.shared.accessToken,
                let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass",
                                                           json: bySession ? ["minutes": minutes, "session": true] : ["minutes": minutes]),
-               let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let signed = pass["token"] as? String {
-                target = URL(string: "\(Config.backendURL)/pass.html#token=\(signed)&to=https://\(site)")
+               let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                signed = pass["token"] as? String
             }
-            if let target { NSWorkspace.shared.open(target) }
+            // Without a pass the site still opens where only this gate stands in the way. In Chrome
+            // Learn Gate would turn it away, so the minutes are kept rather than spent on nothing.
+            if signed == nil && Self.defaultBrowserNeedsPass {
+                passProblem = "Pluckk's server didn't give a pass, and Chrome's Learn Gate opens only with one, so your \(minutes) minutes are kept. Try again in a moment."
+                return
+            }
+            let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            unlockedUntil = until
+            now = Date()
+            reviewsSinceWindow = 0
+            defaults.set(until, forKey: Self.untilKey)
+            defaults.set(0, forKey: Self.sinceKey)
+            defaults.set(Self.today(), forKey: Self.usedTodayKey)
+            defaults.removeObject(forKey: Self.sessionDayKey)      // a session's window is used once
+            let target = signed.map { "\(Config.backendURL)/pass.html#token=\($0)&to=https://\(site)" } ?? "https://\(site)"
+            if let url = URL(string: target) { NSWorkspace.shared.open(url) }
         }
+    }
+
+    /// Why the last try at opening a site came to nothing, if it did.
+    @Published private(set) var passProblem: String?
+    private var opening = false
+
+    /// Chrome is where the Learn Gate extension lives; it lets a gated site through only on a pass.
+    private static var defaultBrowserNeedsPass: Bool {
+        guard let probe = URL(string: "https://example.com"), let app = NSWorkspace.shared.urlForApplication(toOpen: probe) else { return false }
+        return Bundle(url: app)?.bundleIdentifier?.hasPrefix("com.google.Chrome") == true
     }
 
     private static func today() -> String {
@@ -286,7 +306,7 @@ struct SiteGateOffer: View {
                     Text("Finish today's cards to open \(gate.shownSites.joined(separator: " or "))")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                 }
-                if let problem = gate.permissionProblem {
+                if let problem = gate.passProblem ?? gate.permissionProblem {
                     Text(problem).font(.system(size: 11)).foregroundColor(PluckkTheme.Dark.warning)
                         .multilineTextAlignment(.center).frame(maxWidth: 360)
                 }
@@ -317,6 +337,11 @@ struct SiteGateChip: View {
                         }
                         .buttonStyle(.plain)
                         .help("Open \(site) for \(gate.minutes) minutes")
+                    }
+                    if let problem = gate.passProblem {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
+                            .foregroundColor(PluckkTheme.Dark.warning)
+                            .help(problem)
                     }
                 }
             }

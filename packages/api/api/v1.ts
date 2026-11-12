@@ -986,7 +986,8 @@ const passSignature = (body: string) => createHmac('sha256', gateKey()).update(b
 
 // A pass for the gated sites. Earned by finishing the day's cards, or (`session: true`) by a
 // practice session just finished: the Mac app asks for those only once the day has been finished
-// once, when a later batch has arrived. A session's pass needs recent ratings to show for it.
+// once, when a later batch has arrived. A session's pass needs ratings from the last half day to
+// show for it.
 router.on('POST', 'gate/pass', authed(async (req, res, user) => {
   const minutes = Math.max(1, Math.min(60, Math.round(Number((req.body ?? {}).minutes) || 5)));
   const settings = await getStudySettings(user.id);
