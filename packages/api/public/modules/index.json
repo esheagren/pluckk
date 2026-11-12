@@ -4,14 +4,14 @@
    "use": "anatomy@1",
    "owner": "built-in",
    "id": "anatomy",
-   "version": "1.0.0",
+   "version": "1.1.0",
    "title": "Anatomy figure",
    "respond_title": "Click on the body",
    "slots": [
     "prompt",
     "respond"
    ],
-   "describe": "Schematic anatomy figures with named parts: figure is skeleton, muscles, heart, brain or cell. In prompt, `highlight` lights one part up (\"name the highlighted bone\"). In respond, the user clicks a part; `target` is the right one (score 1, else 0) and is shown on reveal. Parts — skeleton: skull, mandible, clavicle, scapula, sternum, ribs, spine, humerus, radius, ulna, hand, pelvis, femur, patella, tibia, fibula, foot; muscles: sternocleidomastoid, trapezius, deltoid, pectoralis, biceps, forearm, abdominis, oblique, quadriceps, adductors, tibialis, calf; heart: svc, ivc, aorta, pulmonary, ra, la, rv, lv; brain: frontal, parietal, occipital, temporal, cerebellum, brainstem; cell: membrane, nucleus, nucleolus, er, golgi, mitochondrion, lysosome, centrosome.",
+   "describe": "Anatomical figures with named parts, drawn from real illustrations (credits in CREDITS.md): figure is skeleton, muscles (front), muscles-back, heart, brain or cell. In prompt, `highlight` tints one part (\"name the highlighted bone\") and the rest of the drawing goes grey. In respond, the figure is in colour and the user clicks a part; `target` is the right one (score 1, else 0) and is shown on reveal. Parts — skeleton: skull, mandible, clavicle, scapula, sternum, ribs, spine, humerus, radius, ulna, hand, pelvis, femur, patella, tibia, fibula, foot; muscles: sternocleidomastoid, trapezius, deltoid, pectoralis, biceps, brachioradialis, forearm, abdominis, oblique, sartorius, quadriceps, adductors, tibialis, calf; muscles-back: trapezius, deltoid, infraspinatus, latissimus, triceps, gluteus, hamstrings, calf; heart: svc, ivc, aorta, pulmonary, pulmonary-veins, ra, la, rv, lv, tricuspid, mitral; brain: frontal, parietal, occipital, temporal, cerebellum, brainstem; cell: membrane, nucleus, nucleolus, er, golgi, mitochondrion, lysosome, centrosome.",
    "props": {
     "type": "object",
     "required": [
@@ -22,6 +22,7 @@
       "enum": [
        "skeleton",
        "muscles",
+       "muscles-back",
        "heart",
        "brain",
        "cell"
@@ -38,7 +39,7 @@
      },
      "height": {
       "type": "number",
-      "description": "Height in points (default 340)"
+      "description": "Height in points (default depends on the figure: 340 to 480)"
      }
     }
    },
@@ -55,6 +56,13 @@
      "props": {
       "figure": "muscles",
       "highlight": "deltoid"
+     }
+    },
+    {
+     "slot": "prompt",
+     "props": {
+      "figure": "muscles-back",
+      "highlight": "latissimus"
      }
     },
     {
