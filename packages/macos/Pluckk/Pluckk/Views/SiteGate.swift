@@ -1,14 +1,16 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 
-/// Distracting sites (YouTube, X…) stay closed until today's Pluckk is done. Every second and a
-/// half Pluckk reads the open tabs of Chrome-family browsers and Safari through Apple Events; a tab
-/// on a gated site, outside an earned window, is sent to a page that says so. Finishing the day
-/// (nothing due, no new cards left) earns a few minutes; the next window needs more cards done.
-/// Once the day has been finished, a later batch (the next study day's, arriving in the evening)
-/// doesn't lock the sites again: a finished practice session earns a window. Earned minutes are
-/// spent by going to the site: the tab in front (the site, Learn Gate's page in Chrome, or
-/// Pluckk's "not yet" page) is let through, with a signed pass where Learn Gate needs one.
+/// Distracting sites (YouTube, X…) are earned by practising here, on this Mac. Every ten cards
+/// rated earn a window on them, and so does finishing everything that's due. One window is kept
+/// at a time, until it's used; going to the site spends it.
+///
+/// Every second and a half Pluckk reads the open tabs of Chrome-family browsers and Safari through
+/// Apple Events. Outside a window, a tab on a gated site is sent to a page that says so. With a
+/// window earned, the tab in front is let through instead: the site itself, Pluckk's "not yet"
+/// page, or (in Chrome) the Learn Gate extension's page, which opens on a pass signed here. No
+/// server and no web app take part: this app is the judge and Learn Gate takes its word.
 /// It only runs while Pluckk does: a nudge, not a lock.
 @MainActor
 final class SiteGate: ObservableObject {
@@ -20,26 +22,24 @@ final class SiteGate: ObservableObject {
     static let defaultSites = "youtube.com, x.com, twitter.com"
     /// The rate: ten cards open the sites for twenty-five minutes (Settings changes the minutes).
     static let defaultMinutes = 25
-    /// Cards to rate after a window before the next one can be earned.
+    /// Cards to rate, since the last window began, to earn the next one.
     static let cardsPerWindow = 10
     /// Fewer count when they clear everything that was waiting: finishing is finishing. Not
-    /// none, so a single card bouncing back every few minutes doesn't earn a window.
+    /// none, so a single card coming due every few minutes doesn't earn a window each time.
     static let batchCards = 5
     private static let untilKey = "siteGate.unlockedUntil"
     private static let sinceKey = "siteGate.reviewsSinceWindow"
     private static let usedTodayKey = "siteGate.windowDay"
-    private static let finishedDayKey = "siteGate.finishedDay"
-    private static let sessionDayKey = "siteGate.sessionEarnedDay"
+    private static let bankedKey = "siteGate.banked"
     private static let leftSinceKey = "siteGate.leftSinceWindow"
-    /// What a practice session must be to earn a window (the same numbers as core's gate.ts).
-    static let sessionMinutes = 4
-    static let sessionCards = 10
 
     /// Where a blocked tab goes.
     static let blockPage = "\(Config.backendURL)/blocked.html"
 
     @Published private(set) var unlockedUntil: Date?
     @Published private(set) var reviewsSinceWindow: Int
+    /// A window earned and not yet used. One at a time; it's kept until it's used.
+    @Published private(set) var banked: Bool
     @Published private(set) var now = Date()
 
     private var timer: Timer?
@@ -54,6 +54,11 @@ final class SiteGate: ObservableObject {
         let until = defaults.object(forKey: Self.untilKey) as? Date
         unlockedUntil = until.flatMap { $0 > Date() ? $0 : nil }
         reviewsSinceWindow = defaults.integer(forKey: Self.sinceKey)
+        // A window earned under the earlier rules (kept by the day) carries over.
+        if defaults.string(forKey: "siteGate.sessionEarnedDay") == Self.today() { defaults.set(true, forKey: Self.bankedKey) }
+        defaults.removeObject(forKey: "siteGate.sessionEarnedDay")
+        defaults.removeObject(forKey: "siteGate.finishedDay")
+        banked = defaults.bool(forKey: Self.bankedKey)
     }
 
     var enabled: Bool { defaults.bool(forKey: Self.enabledKey) }
@@ -71,15 +76,6 @@ final class SiteGate: ObservableObject {
     var isOpen: Bool { (unlockedUntil ?? .distantPast) > now }
     var secondsLeft: Int { max(0, Int((unlockedUntil ?? now).timeIntervalSince(now).rounded(.up))) }
 
-    /// The first window of a day comes with finishing it; after that, each needs more cards rated:
-    /// a handful when there was a batch to clear, the full ten when the cards were added by hand.
-    /// (A handful, not none, so one card bouncing back every few minutes doesn't earn a window.)
-    var cardsToNextWindow: Int {
-        let usedToday = defaults.string(forKey: Self.usedTodayKey) == Self.today()
-        let needed = leftSinceWindow ? Self.batchCards : Self.cardsPerWindow
-        return usedToday ? max(0, needed - reviewsSinceWindow) : 0
-    }
-
     func start() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -88,101 +84,43 @@ final class SiteGate: ObservableObject {
         tick()
     }
 
-    /// A card rated anywhere in Practice counts toward the next window.
+    // MARK: Earning a window
+
+    /// Cards still to rate before the next window is earned.
+    var cardsToNextWindow: Int { banked ? 0 : max(1, Self.cardsPerWindow - reviewsSinceWindow) }
+
+    /// A card rated anywhere in Practice counts. Ten since the last window began earn the next.
     func noteReview() {
         reviewsSinceWindow += 1
         defaults.set(reviewsSinceWindow, forKey: Self.sinceKey)
-    }
-
-    // MARK: After the day is done
-
-    /// Today's cards were all done at some point today (by the calendar), even if a new batch has
-    /// arrived since.
-    var finishedToday: Bool { defaults.string(forKey: Self.finishedDayKey) == Self.today() }
-
-    /// Nothing due and no new cards left: the day is finished, and stays so until midnight.
-    func noteDayFinished() {
-        guard !finishedToday else { return }
-        defaults.set(Self.today(), forKey: Self.finishedDayKey)
-        objectWillChange.send()
-    }
-
-    /// A window earned (by a practice session, or by finishing what was due) and not yet used.
-    /// It lapses at midnight.
-    var sessionEarned: Bool { defaults.string(forKey: Self.sessionDayKey) == Self.today() }
-
-    /// A timed session ran its course. Once the day has been finished, one that's long enough and
-    /// had enough cards rated in it earns a window.
-    func noteSession(minutes: Int, cards: Int) {
-        guard enabled, finishedToday, !isOpen, minutes >= Self.sessionMinutes, cards >= Self.sessionCards else { return }
-        defaults.set(Self.today(), forKey: Self.sessionDayKey)
-        objectWillChange.send()
+        if reviewsSinceWindow >= Self.cardsPerWindow { bank() }
     }
 
     /// Nothing is left today, as Practice last saw it (across every deck).
     @Published private(set) var dayIsDone = false
 
-    /// Practice's latest count of what's left today.
+    /// Practice's latest count of what's left today. Finishing earns a window too: the first
+    /// time each day, and after that when what was cleared was a batch rather than a card or two.
+    /// It's earned there and then and kept, because "nothing left" doesn't last: cards due later
+    /// in the day keep coming into the count, a few an hour.
     func noteToday(left: Int) {
-        if left == 0 { noteDayFinished() }
-        // Cards waiting since the last window: clearing them is what earns the next one.
         if left > 0 && !defaults.bool(forKey: Self.leftSinceKey) { defaults.set(true, forKey: Self.leftSinceKey) }
         if dayIsDone != (left == 0) { dayIsDone = left == 0 }
-        // Finishing earns the window there and then, and it's kept until it's used (or midnight).
-        // "Nothing left" doesn't last: cards due later today keep coming into the count, a few an
-        // hour, so a window that depended on the count still being zero when the site is visited
-        // would often be gone by then.
-        if left == 0 && cardsToNextWindow == 0 && !isOpen && !sessionEarned {
-            defaults.set(Self.today(), forKey: Self.sessionDayKey)
-            objectWillChange.send()
-        }
+        guard left == 0 else { return }
+        let usedToday = defaults.string(forKey: Self.usedTodayKey) == Self.today()
+        let clearedBatch = defaults.bool(forKey: Self.leftSinceKey) && reviewsSinceWindow >= Self.batchCards
+        if !usedToday || clearedBatch { bank() }
     }
 
-    /// There have been cards to do since the last window (a new batch came in, say).
-    private var leftSinceWindow: Bool { defaults.bool(forKey: Self.leftSinceKey) }
-
-    /// How a window was earned: by finishing the day's cards, or by a practice session after that.
-    enum Earned { case day, session }
-
-    /// A window there for the taking, if any.
-    /// Finishing what's due earns one: the first of the day, and again whenever a later batch
-    /// has been cleared (see cardsToNextWindow). Mid-batch, once the day has been finished, a
-    /// practice session earns one too.
-    var earned: Earned? {
-        if dayIsDone && cardsToNextWindow == 0 { return .day }
-        return sessionEarned ? .session : nil
+    private func bank() {
+        guard enabled, !banked else { return }
+        banked = true
+        defaults.set(true, forKey: Self.bankedKey)
     }
 
-    /// Open the gate for the earned minutes, and the site itself in the default browser.
-    /// `bySession`: the window was earned by a practice session rather than a finished day.
-    func open(site: String, bySession: Bool = false) {
-        guard !opening else { return }
-        opening = true
-        passProblem = nil
-        Task {
-            defer { opening = false }
-            let signed = await pass(bySession ? .session : .day)
-            // Without a pass the site still opens where only this gate stands in the way. In Chrome
-            // Learn Gate would turn it away, so the minutes are kept rather than spent on nothing.
-            if signed == nil && Self.defaultBrowserNeedsPass {
-                passProblem = "Pluckk's server didn't give a pass, and Chrome's Learn Gate opens only with one, so your \(minutes) minutes are kept. Try again in a moment."
-                return
-            }
-            beginWindow()
-            if let url = URL(string: Self.address(of: "https://\(site)", pass: signed)) { NSWorkspace.shared.open(url) }
-        }
-    }
-
-    /// A signed pass from Pluckk's server, which the Learn Gate extension in Chrome opens on.
-    /// A kept window is asked for as a session's: the server gives the day's pass only while
-    /// nothing is due at that very moment, and a card may have come due since the window was earned.
-    private func pass(_ earned: Earned) async -> String? {
-        let kept = earned == .session || sessionEarned
-        guard let token = AuthManager.shared.accessToken,
-              let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass",
-                                                         json: kept ? ["minutes": minutes, "session": true] : ["minutes": minutes]),
-              let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        return pass["token"] as? String
+    /// The button in Pluckk: go to the site. Arriving there is what spends the window (see `answer`).
+    func open(site: String) {
+        if let url = URL(string: "https://\(site)") { NSWorkspace.shared.open(url) }
     }
 
     /// The earned minutes start now.
@@ -191,36 +129,54 @@ final class SiteGate: ObservableObject {
         unlockedUntil = until
         now = Date()
         reviewsSinceWindow = 0
+        banked = false
         defaults.set(until, forKey: Self.untilKey)
         defaults.set(0, forKey: Self.sinceKey)
         defaults.set(Self.today(), forKey: Self.usedTodayKey)
-        defaults.removeObject(forKey: Self.sessionDayKey)      // a session's window is used once
+        defaults.set(false, forKey: Self.bankedKey)
         defaults.set(false, forKey: Self.leftSinceKey)
-    }
-
-    /// Where to send the browser for a site: through Pluckk's pass page when there's a pass (so
-    /// Learn Gate unlocks too), else straight there.
-    nonisolated private static func address(of target: String, pass: String?) -> String {
-        guard let pass else { return target }
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        let to = target.addingPercentEncoding(withAllowedCharacters: allowed) ?? target
-        return "\(Config.backendURL)/pass.html#token=\(pass)&to=\(to)"
-    }
-
-    /// Why the last try at opening a site came to nothing, if it did.
-    @Published private(set) var passProblem: String?
-    private var opening = false
-
-    /// Chrome is where the Learn Gate extension lives; it lets a gated site through only on a pass.
-    private static var defaultBrowserNeedsPass: Bool {
-        guard let probe = URL(string: "https://example.com"), let app = NSWorkspace.shared.urlForApplication(toOpen: probe) else { return false }
-        return Bundle(url: app)?.bundleIdentifier?.hasPrefix("com.google.Chrome") == true
     }
 
     private static func today() -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date())
     }
+
+    // MARK: Learn Gate's pass
+
+    /// The Learn Gate extension (Chrome) opens on a pass signed here: when the window ends, and
+    /// this app's signature over it. The extension remembers the first key it's shown and takes
+    /// passes from no other, so the pass can't be typed in by hand. The key never leaves this Mac.
+    private static let passKey: P256.Signing.PrivateKey? = {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Pluckk", isDirectory: true)
+        let file = folder.appendingPathComponent("gate-key")
+        if let data = try? Data(contentsOf: file), let key = try? P256.Signing.PrivateKey(rawRepresentation: data) { return key }
+        let key = P256.Signing.PrivateKey()
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try key.rawRepresentation.write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            return key
+        } catch {
+            return nil
+        }
+    }()
+
+    /// "<until, ms>.<signature>.<public key>", the last two base64url. Signed text: "pluckk-pass.v1.<until>".
+    static func pass(until: Date) -> String? {
+        let ms = Int64((until.timeIntervalSince1970 * 1000).rounded())
+        guard let key = passKey, let signature = try? key.signature(for: Data("pluckk-pass.v1.\(ms)".utf8)) else { return nil }
+        return "\(ms).\(base64url(signature.rawRepresentation)).\(base64url(key.publicKey.x963Representation))"
+    }
+
+    private static func base64url(_ data: Data) -> String {
+        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// What Pluckk adds after the address on Learn Gate's page: the pass, or how far off one is.
+    nonisolated static let passMark = "#pluckk-pass="
+    nonisolated static let needMark = "#pluckk-need="
 
     // MARK: Watching the browsers
 
@@ -236,7 +192,7 @@ final class SiteGate: ObservableObject {
             unlockedUntil = nil
             defaults.removeObject(forKey: Self.untilKey)
         }
-        guard enabled, !isOpen else { return }
+        guard enabled else { return }
         let gated = sites
         guard !gated.isEmpty else { return }
         // Only the browser in front: that's where a gated page would be read, it's certainly
@@ -244,13 +200,14 @@ final class SiteGate: ObservableObject {
         guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier, Self.browsers.contains(front) else { return }
         guard !sweeping else { return }
         sweeping = true
-        let earned = self.earned
+        // In a window nothing is sent away; with one earned, the tab in front is spared (it's about to be let in).
+        let block: Blocking = isOpen ? .nothing : banked ? .allButFront : .all
         queue.async { [weak self] in
-            let (problem, knock) = Self.sweep(browser: front, gated: gated, earned: earned != nil)
+            let (problem, knock) = Self.sweep(browser: front, gated: gated, block: block)
             Task { @MainActor in
                 self?.sweeping = false
                 self?.notePermission(problem)
-                if let knock, let earned { await self?.answer(knock, earned: earned) }
+                if let knock { self?.answer(knock) }
             }
         }
     }
@@ -259,12 +216,15 @@ final class SiteGate: ObservableObject {
         if permissionProblem != problem { permissionProblem = problem }
     }
 
-    /// The tab in front is asking for a gated site, and there are minutes earned.
+    /// Which gated tabs a sweep sends to the block page.
+    enum Blocking { case all, allButFront, nothing }
+
+    /// The tab in front is on a gated site, or on a page standing in for one.
     struct Knock {
         enum Kind {
-            /// The site itself, in a browser where only this gate stands in the way.
+            /// The site itself.
             case site
-            /// Learn Gate's page (Chrome), which opens only on a signed pass.
+            /// Learn Gate's page (Chrome), which opens on a signed pass.
             case learnGate
             /// Pluckk's own "not yet" page.
             case blocked
@@ -278,32 +238,44 @@ final class SiteGate: ObservableObject {
         let target: String
     }
 
-    /// Going to a gated site with minutes earned spends them: the window starts and the tab goes
-    /// on to the site. Nothing to click in Pluckk first.
-    private func answer(_ knock: Knock, earned: Earned) async {
-        guard !opening, !isOpen, self.earned != nil else { return }
-        opening = true
-        defer { opening = false }
-        passProblem = nil
-        var signed: String?
-        if knock.kind != .site {
-            signed = await pass(earned)
-            if signed == nil && knock.kind == .learnGate {
-                // The day's pass is refused once a new batch has arrived: what's left has changed.
-                if earned == .day { PracticeSession.shared.refreshTodayCounts() }
-                passProblem = "Pluckk's server didn't give a pass, and Chrome's Learn Gate opens only with one, so your \(minutes) minutes are kept. Try again in a moment."
+    /// Going to a gated site with a window earned spends it: the window starts and the tab goes
+    /// on to the site. Nothing to click in Pluckk first. In a window that's already running, a
+    /// waiting page is simply let through. With nothing earned, Learn Gate's page is told how
+    /// many cards are still to go, so it can say so.
+    private func answer(_ knock: Knock) {
+        if !isOpen {
+            guard banked else {
+                if knock.kind == .learnGate { send(knock, to: Self.gatePage(knock.url, target: knock.target) + Self.needMark + "\(cardsToNextWindow)") }
                 return
             }
+            beginWindow()
         }
-        beginWindow()
-        guard knock.kind != .site else { return }       // already on the site; it just stops being sent away
-        let to = Self.address(of: knock.target, pass: signed)
+        switch knock.kind {
+        case .site:
+            break                                   // already there; it just stops being sent away
+        case .blocked:
+            send(knock, to: knock.target)
+        case .learnGate:
+            guard let until = unlockedUntil, let pass = Self.pass(until: until) else { return }
+            send(knock, to: Self.gatePage(knock.url, target: knock.target) + Self.passMark + pass)
+        }
+    }
+
+    /// Learn Gate's page for a target, without anything Pluckk added to it before.
+    nonisolated private static func gatePage(_ url: String, target: String) -> String {
+        guard let hash = url.range(of: "/gate.html#") else { return url }
+        return String(url[..<hash.upperBound]) + target
+    }
+
+    /// Point the knocking tab somewhere else: only if it's still where it was (tabs move), and
+    /// only if that changes anything (a pass or a count already handed over isn't sent again).
+    private func send(_ knock: Knock, to address: String) {
+        guard address != knock.url else { return }
         queue.async {
-            // Only if the tab is still where it was: tabs move while a pass is fetched.
             _ = Self.osascript("""
             with timeout of 3 seconds
             tell application id "\(knock.browser)"
-            if (URL of tab \(knock.tab) of window \(knock.window)) is "\(Self.quoted(knock.url))" then set URL of tab \(knock.tab) of window \(knock.window) to "\(Self.quoted(to))"
+            if (URL of tab \(knock.tab) of window \(knock.window)) is "\(Self.quoted(knock.url))" then set URL of tab \(knock.tab) of window \(knock.window) to "\(Self.quoted(address))"
             end tell
             end timeout
             """)
@@ -314,14 +286,14 @@ final class SiteGate: ObservableObject {
         text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
 
-    /// Reads every tab's address in one browser. Gated ones are sent to the block page, unless
-    /// minutes are earned and it's the tab in front: that one comes back as a knock, to be let in.
-    /// So do Learn Gate's page and Pluckk's block page when they're in front. Runs osascript as its
-    /// own process with a time limit, so a slow or hung browser can't stall Pluckk. Also returns a
-    /// message if macOS refused (Automation permission not given).
+    /// Reads every tab's address in one browser. Gated ones are sent to the block page, as
+    /// `block` says. The tab in front comes back as a knock when it's on a gated site, on Learn
+    /// Gate's page or on Pluckk's block page. Runs osascript as its own process with a time limit,
+    /// so a slow or hung browser can't stall Pluckk. Also returns a message if macOS refused
+    /// (Automation permission not given).
     /// The separator is set outside the tell block: inside it, `tab` means the browser's tab
     /// class and comes out as the word "tab", so no line would parse and nothing would be blocked.
-    nonisolated private static func sweep(browser id: String, gated: [String], earned: Bool) -> (problem: String?, knock: Knock?) {
+    nonisolated private static func sweep(browser id: String, gated: [String], block: Blocking) -> (problem: String?, knock: Knock?) {
         // Which tab of the front window is showing: Safari and the Chrome family say it differently.
         let active = id == "com.apple.Safari" ? "index of current tab of window 1" : "active tab index of window 1"
         let read = """
@@ -358,10 +330,12 @@ final class SiteGate: ObservableObject {
             if parts.count == 2, parts[0] == "A" { front = Int(parts[1]) ?? 0; continue }
             guard parts.count == 3, let w = Int(parts[0]), let t = Int(parts[1]) else { continue }
             let url = parts[2]
-            let inFront = earned && w == 1 && t == front
+            let inFront = w == 1 && t == front
             if let host = gatedHost(url, gated) {
                 if inFront { knock = Knock(kind: .site, browser: id, window: w, tab: t, url: url, target: url) }
-                else { sets.append("set URL of tab \(t) of window \(w) to \"\(blockPage)?site=\(host)\"") }
+                if block == .all || (block == .allButFront && !inFront) {
+                    sets.append("set URL of tab \(t) of window \(w) to \"\(blockPage)?site=\(host)\"")
+                }
             } else if inFront, let target = wanted(by: url, gated: gated) {
                 knock = Knock(kind: url.hasPrefix(blockPage) ? .blocked : .learnGate, browser: id, window: w, tab: t, url: url, target: target)
             }
@@ -369,14 +343,17 @@ final class SiteGate: ObservableObject {
         if !sets.isEmpty {
             _ = osascript("with timeout of 3 seconds\ntell application id \"\(id)\"\n\(sets.joined(separator: "\n"))\nend tell\nend timeout")
         }
+        // A gated tab in front that was just sent away isn't knocking any more.
+        if block == .all, knock?.kind == .site { knock = nil }
         return (nil, knock)
     }
 
-    /// The gated address a waiting page stands in for: Learn Gate's page carries it after the #,
-    /// Pluckk's block page names the site.
+    /// The gated address a waiting page stands in for: Learn Gate's page carries it after the #
+    /// (before anything Pluckk added), Pluckk's block page names the site.
     nonisolated static func wanted(by url: String, gated: [String]) -> String? {
         if url.hasPrefix("chrome-extension://"), let hash = url.range(of: "/gate.html#") {
-            let target = String(url[hash.upperBound...])
+            var target = String(url[hash.upperBound...])
+            if let added = target.range(of: "#pluckk-") { target = String(target[..<added.lowerBound]) }
             return gatedHost(target, gated) != nil ? target : nil
         }
         if url.hasPrefix(blockPage), let site = URLComponents(string: url)?.queryItems?.first(where: { $0.name == "site" })?.value,
@@ -420,6 +397,9 @@ extension SiteGate {
     var shownSites: [String] { sites.filter { $0 != "twitter.com" || !sites.contains("x.com") } }
 
     var countdown: String { "\(secondsLeft / 60):\(String(format: "%02d", secondsLeft % 60))" }
+
+    /// "3 more cards", for what's still to rate before the next window.
+    var cardsToGo: String { "\(cardsToNextWindow) more card\(cardsToNextWindow == 1 ? "" : "s")" }
 }
 
 /// On the Done screen and after a session: the earned minutes, as one button per gated site, or
@@ -436,27 +416,21 @@ struct SiteGateOffer: View {
                     Text("Open for \(gate.countdown) more")
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
                         .foregroundColor(PluckkTheme.accent)
-                } else if let earned = gate.earned {
+                } else if gate.banked {
                     Text("You've earned \(gate.minutes) minutes").font(.system(size: 12)).foregroundColor(.secondary)
                     HStack(spacing: 8) {
                         ForEach(gate.shownSites, id: \.self) { site in
-                            Button("Open \(site)") { gate.open(site: site, bySession: earned == .session) }
+                            Button("Open \(site)") { gate.open(site: site) }
                                 .buttonStyle(PillButtonStyle(prominent: false))
                         }
                     }
-                } else if dayDone {
-                    Text("\(gate.cardsToNextWindow) more card\(gate.cardsToNextWindow == 1 ? "" : "s") to earn another \(gate.minutes) minutes. Add new cards above.")
-                        .font(.system(size: 12)).foregroundColor(.secondary)
-                } else if gate.finishedToday {
-                    // The day was done once; what's here now is the next batch.
-                    Text("Today's cards are done. A practice session of \(SiteGate.sessionMinutes) minutes and \(SiteGate.sessionCards) cards earns \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or ")).")
+                } else {
+                    Text("\(gate.cardsToGo) for \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or "))."
+                         + (dayDone ? " Add new cards above." : ""))
                         .font(.system(size: 12)).foregroundColor(.secondary)
                         .multilineTextAlignment(.center).frame(maxWidth: 380)
-                } else {
-                    Text("Finish today's cards to open \(gate.shownSites.joined(separator: " or "))")
-                        .font(.system(size: 12)).foregroundColor(.secondary)
                 }
-                if let problem = gate.passProblem ?? gate.permissionProblem {
+                if let problem = gate.permissionProblem {
                     Text(problem).font(.system(size: 11)).foregroundColor(PluckkTheme.Dark.warning)
                         .multilineTextAlignment(.center).frame(maxWidth: 360)
                 }
@@ -465,8 +439,8 @@ struct SiteGateOffer: View {
     }
 }
 
-/// In Practice's header: a session's window waiting to be used, or how long an open one has left.
-/// Nothing at all otherwise.
+/// In Practice's header: how long an open window has left, a window waiting to be used, or how
+/// many cards the next one is away.
 struct SiteGateChip: View {
     @ObservedObject private var gate = SiteGate.shared
     @AppStorage(SiteGate.enabledKey) private var enabled = true
@@ -478,22 +452,22 @@ struct SiteGateChip: View {
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundColor(PluckkTheme.accent)
                     .help("\(gate.shownSites.joined(separator: " and ")) stay open until this runs out")
-            } else if let earned = gate.earned {
+            } else if gate.banked {
                 HStack(spacing: 8) {
                     Text("\(gate.minutes) min earned").font(.system(size: 11, weight: .semibold)).foregroundColor(PluckkTheme.accent)
                     ForEach(gate.shownSites, id: \.self) { site in
-                        Button(action: { gate.open(site: site, bySession: earned == .session) }) {
+                        Button(action: { gate.open(site: site) }) {
                             Text(site).font(.system(size: 11)).underline().foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Open \(site) for \(gate.minutes) minutes")
                     }
-                    if let problem = gate.passProblem {
-                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
-                            .foregroundColor(PluckkTheme.Dark.warning)
-                            .help(problem)
-                    }
                 }
+            } else {
+                Text("\(gate.cardsToNextWindow) to go")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .help("\(gate.cardsToGo) for \(gate.minutes) minutes of \(gate.shownSites.joined(separator: " or "))")
             }
         }
     }

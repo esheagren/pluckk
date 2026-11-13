@@ -325,7 +325,7 @@ struct SettingsView: View {
         .frame(width: 320, height: 600)
 }
 
-/// Which sites stay closed until the day's cards are done, and how long finishing opens them for.
+/// Which sites stay closed until they're earned by practising, and how long a window lasts.
 struct SiteGateSettings: View {
     @AppStorage(SiteGate.enabledKey) private var enabled = true
     @AppStorage(SiteGate.sitesKey) private var sites = SiteGate.defaultSites
@@ -335,13 +335,13 @@ struct SiteGateSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Earn your sites").font(.headline)
-            Toggle("Keep these sites closed until today's cards are done", isOn: $enabled)
+            Toggle("Keep these sites closed until they're earned", isOn: $enabled)
             TextField("youtube.com, x.com", text: $sites)
                 .textFieldStyle(.roundedBorder)
                 .disabled(!enabled)
-            Stepper("Finishing opens them for \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
+            Stepper("A window lasts \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
                 .disabled(!enabled)
-            Text("Works in Chrome, Brave, Edge, Arc and Safari while Pluckk is running. \(SiteGate.cardsPerWindow) cards earn a window: added cards once nothing's left, or (once the day has been finished) a practice session of \(SiteGate.sessionMinutes) minutes or more. Finishing everything that's due earns one too, the first time each day and again after a later batch of \(SiteGate.batchCards) cards or more. Going to the site spends it. macOS asks once per browser to let Pluckk control it. Turn on Launch at login below so the gate is always up.")
+            Text("Works in Chrome, Brave, Edge, Arc and Safari while Pluckk is running. Every \(SiteGate.cardsPerWindow) cards you rate here earn a window, and so does finishing everything that's due (the first time each day, and after that when it was \(SiteGate.batchCards) cards or more). One window is kept at a time, until you use it; going to the site spends it. In Chrome the Learn Gate extension opens on Pluckk's word. macOS asks once per browser to let Pluckk control it. Turn on Launch at login below so the gate is always up.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             if let problem = gate.permissionProblem {

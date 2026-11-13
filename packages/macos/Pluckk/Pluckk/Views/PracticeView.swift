@@ -89,7 +89,6 @@ final class PracticeSession: ObservableObject {
     func beginSprint() {
         timesUp = false
         celebrateAfterThisCard = false
-        sprintCards = 0
         switch phase {
         case .idle, .done, .failed: start()
         default: break
@@ -106,14 +105,10 @@ final class PracticeSession: ObservableObject {
         }
     }
     private var celebrateAfterThisCard = false
-    /// Cards rated in the sprint that's running (or just ran).
-    private var sprintCards = 0
 
-    /// The sprint ran its full length: "Good job", and the site gate hears how it went (a real
-    /// session can earn a window once the day's cards have been done).
+    /// The sprint ran its full length: "Good job".
     private func sprintEnded() {
         timesUp = true
-        SiteGate.shared.noteSession(minutes: SessionTimer.shared.minutes, cards: sprintCards)
     }
 
     /// The "Good job" moment is over: back to the next card, unrevealed. Nothing asks you to go
@@ -147,8 +142,7 @@ final class PracticeSession: ObservableObject {
             do {
                 let counts = try await PluckkAPI.shared.reviewToday(token: token)
                 if request == countsRequest { todayCounts = counts }
-                // The site gate hears what's left. Nothing due and no new cards: the day is done,
-                // which it remembers until midnight even if tomorrow's batch arrives this evening.
+                // The site gate hears what's left: finishing everything earns a window.
                 SiteGate.shared.noteToday(left: counts.review + counts.learn)
             } catch {
                 if OfflineStore.isNetworkError(error), request == countsRequest, let counts = OfflineStore.shared.today() {
@@ -567,7 +561,6 @@ final class PracticeSession: ObservableObject {
                 }
                 SiteGate.shared.noteReview()
                 reviewedCount += 1
-                sprintCards += 1
                 if rating == .again {
                     var requeued = item
                     requeued.previews = result.previews
@@ -1556,7 +1549,7 @@ struct PracticeView: View {
 }
 
 /// End of a sprint: "Good job", then the practice-day grid, held briefly, then it fades and the
-/// next card is there again. No count to beat; a click skips it. If the session earned time on
+/// next card is there again. No count to beat; a click skips it. If there's time earned on
 /// the gated sites, it stays up with the offer until that's taken or passed over.
 struct SprintCelebration: View {
     let onDone: () -> Void
@@ -1574,7 +1567,7 @@ struct SprintCelebration: View {
                 .frame(maxWidth: 320)
                 .opacity(showGrid ? 1 : 0)
                 .offset(y: showGrid ? 0 : 6)
-            if showGrid && (gate.earned != nil || gate.isOpen) {
+            if showGrid && (gate.banked || gate.isOpen) {
                 SiteGateOffer(dayDone: false)
                 Button("Keep practising") { finish() }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
@@ -1590,7 +1583,7 @@ struct SprintCelebration: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeOut(duration: 0.35)) { showGrid = true }
             try? await Task.sleep(nanoseconds: 2_350_000_000)
-            if gate.earned == nil { finish() }     // earned minutes wait to be taken
+            if !gate.banked { finish() }     // earned minutes wait to be taken
         }
     }
 
