@@ -1003,6 +1003,10 @@ router.on('POST', 'media', authed(async (req, res, user) => {
 }));
 
 // ---------------------------------------------------------------- site passes
+// No longer asked for: the Mac app now signs Learn Gate's pass itself and the extension checks it
+// locally (see SiteGate.swift), so no server takes part in the site gate. Kept for a release in
+// case an older app or extension is still about; then this, pass.html and core's gate.ts can go.
+//
 // The Mac app's "Open x.com for 25 minutes" also has to satisfy Erik's Learn Gate extension in
 // Chrome. The app asks for a pass, which is only issued once nothing is due and today's new cards
 // are done, signed so it can't be made up; Learn Gate checks it here before unlocking.
