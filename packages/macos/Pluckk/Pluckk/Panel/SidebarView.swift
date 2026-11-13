@@ -208,16 +208,8 @@ struct NavRail: View {
                     isActive: appState.currentView == .generate || appState.currentView == .newCard) {
                 appState.currentView = .generate
             }
-            // Decks and Flagged are one page; the flag opens it on the flagged cards.
-            let onFlagged = appState.currentView == .decks && appState.openDeckId == DeckWorkspaceView.flaggedId
-            RailTab(icon: "pencil", label: "Decks & cards", isActive: appState.currentView == .decks && !onFlagged) {
-                if onFlagged { appState.openDeckId = nil }
-                appState.currentView = .decks
-            }
-            RailTab(icon: "flag", label: "Flagged cards", isActive: onFlagged) {
-                appState.openDeckId = DeckWorkspaceView.flaggedId
-                appState.currentView = .decks
-            }
+            // Flagged cards and leeches are on the Decks page, above the decks.
+            tab(.decks, icon: "pencil", label: "Decks & cards")
             tab(.modules, icon: "puzzlepiece.extension", label: "Modules")
             tab(.statistics, icon: "chart.pie", label: "Statistics")
             Spacer()

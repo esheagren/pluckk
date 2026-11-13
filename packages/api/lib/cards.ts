@@ -22,6 +22,16 @@ export class CardError extends Error {
 // ---------------------------------------------------------------- request → core values
 
 export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSpec | null): CardSpec | null {
+  const spec = specFromFields(b, current);
+  // The Wikipedia article: the body's when it names one (null: none fits), else the card's own,
+  // so an edit to the words doesn't drop it.
+  if (spec && 'wikipedia' in b && b.wikipedia !== undefined) return { ...spec, wikipedia: b.wikipedia };
+  if (spec && !('wikipedia' in spec) && current && 'wikipedia' in current) return { ...spec, wikipedia: current.wikipedia };
+  if (!spec && current && 'wikipedia' in b && b.wikipedia !== undefined) return { ...current, wikipedia: b.wikipedia };
+  return spec;
+}
+
+function specFromFields(b: CreateCardBody | PatchCardBody, current?: CardSpec | null): CardSpec | null {
   if (b.spec) return b.spec;
   if (!b.question && !b.answer && !b.style && !('answer_type' in b) && !('numeric_answer' in b) && !('numeric_unit' in b) && !('modules' in b)) return null;
   if (current && (current.style === 'qa_bidirectional' || current.style === 'cloze_list')) {

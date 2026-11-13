@@ -107,6 +107,9 @@ struct GeneratedCard: Identifiable {
     var items: [String]?
     var prompts: [QAPair]?
 
+    /// The Wikipedia article the model chose for it (exact title), saved with the card.
+    var wikipedia: String?
+
     /// Number of cards this will expand to when saved (can be 0 for invalid cards)
     var expandedCardCount: Int {
         switch style {

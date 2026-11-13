@@ -34,6 +34,9 @@ export const modulesSchema = z.object({
   reveal: z.array(moduleUseSchema).max(4).optional(),
 });
 
+/** A card's Wikipedia article: its exact title; null when there's none that fits. */
+export const wikipediaSchema = z.string().trim().min(1).max(300).nullish();
+
 /** Card spec, wire form (camelCase inside the spec object — it is stored as JSON verbatim). */
 export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style', [
   z.object({
@@ -44,9 +47,10 @@ export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style',
     answerType: z.enum(['text', 'numeric', 'written']).optional(),
     numeric: numericSchema.nullish(),
     modules: modulesSchema.nullish(),
+    wikipedia: wikipediaSchema,
   }),
-  z.object({ style: z.literal('qa_bidirectional'), forward: qaSchema, reverse: qaSchema }),
-  z.object({ style: z.literal('cloze_list'), listName: z.string(), items: z.array(z.string()), prompts: z.array(qaSchema).min(1) }),
+  z.object({ style: z.literal('qa_bidirectional'), forward: qaSchema, reverse: qaSchema, wikipedia: wikipediaSchema }),
+  z.object({ style: z.literal('cloze_list'), listName: z.string(), items: z.array(z.string()), prompts: z.array(qaSchema).min(1), wikipedia: wikipediaSchema }),
 ]) as z.ZodType<CardSpec>;
 
 export const textQuoteSelectorSchema = z.object({
@@ -95,6 +99,7 @@ export const createCardBodySchema = z.object({
   tags: z.array(z.string()).nullish(),
   image_url: z.string().nullish(),
   modules: modulesSchema.nullish(),
+  wikipedia: wikipediaSchema,
 }).refine((b) => b.spec || (b.question && b.answer), { message: 'spec or question+answer required' });
 export type CreateCardBody = z.infer<typeof createCardBodySchema>;
 
@@ -115,6 +120,8 @@ export const patchCardBodySchema = z.object({
   numeric_unit: z.string().nullish(),
   // A simple card's modules (see CardModules); null removes them all.
   modules: modulesSchema.nullish(),
+  // The card's Wikipedia article (any style of card); null: none fits.
+  wikipedia: wikipediaSchema,
 });
 export type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 

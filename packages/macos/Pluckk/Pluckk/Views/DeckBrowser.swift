@@ -5,9 +5,21 @@ import SwiftUI
 struct DeckBrowserPanel: View {
     let deck: DeckSummary
     let allDecks: [DeckSummary]
-    /// Every flagged card, whatever its deck, rather than one deck's cards (`deck` then only
-    /// carries the name and count).
-    var flagged = false
+    /// Every card in a collection (flagged, leeches), whatever its deck, rather than one deck's
+    /// cards (`deck` then only carries the name and count).
+    var collection: CardCollection? = nil
+    private var flagged: Bool { collection != nil }
+
+    /// What to say when nothing's here.
+    private var emptyText: String {
+        if let collection { return collection.empty }
+        switch filter {
+        case .rework: return CardCollection.flagged.empty
+        case .leech: return CardCollection.leeches.empty
+        case .all: return "No cards here."
+        default: return "No cards match."
+        }
+    }
     let onSelect: (DeckSummary) -> Void
     /// A card moved or deleted, so the decks' counts are stale.
     let onChanged: () -> Void
@@ -152,12 +164,12 @@ struct DeckBrowserPanel: View {
             }
             Spacer(minLength: 6)
             if flagged {
-                Button(action: { practiseRun(.init(title: "Flagged", cardIds: shown.map(\.id))) }) {
+                Button(action: { practiseRun(.init(title: collection?.title ?? "Cards", cardIds: shown.map(\.id))) }) {
                     HStack(spacing: 5) { Image(systemName: "play.fill").font(.system(size: 9)); Text("Practice") }
                 }
                 .buttonStyle(PillButtonStyle(prominent: true))
                 .disabled(shown.isEmpty)
-                .help("Practise the flagged cards now (schedule unchanged)")
+                .help("Practise these cards now (schedule unchanged)")
             } else {
                 practiceButtons
             }
@@ -224,8 +236,7 @@ struct DeckBrowserPanel: View {
             .padding(.horizontal, 16).padding(.bottom, 12)
             if loading { ProgressView().controlSize(.small).padding() }
             if reachedEnd && cards.isEmpty {
-                Text(flagged || filter == .rework ? "Nothing flagged. Flag a card on its tile, in Practice or in the editor, and it collects here."
-                     : filter == .all ? "No cards here." : "No cards match.")
+                Text(emptyText)
                     .font(.system(size: 13)).foregroundColor(.secondary).padding(.top, 30)
             }
         }
@@ -278,7 +289,7 @@ struct DeckBrowserPanel: View {
         let tags = Rework.toggled(card.tags)
         run("Couldn't update the flag") { token in
             try await PluckkAPI.shared.setTags(token: token, cardId: card.id, tags: tags)
-            if (flagged || filter == .rework) && !tags.contains(Rework.tag) {
+            if (collection == .flagged || (collection == nil && filter == .rework)) && !tags.contains(Rework.tag) {
                 // Unflagged while looking at flagged cards: it leaves the list.
                 cards.removeAll { $0.id == card.id }
                 if openCard == card.id { openCard = nil }
@@ -340,8 +351,8 @@ struct DeckBrowserPanel: View {
         let wanted = filter
         Task {
             defer { loading = false }
-            let fetched = flagged
-                ? try? await PluckkAPI.shared.cards(token: token, tag: Rework.tag, limit: Self.pageSize, offset: cards.count)
+            let fetched = collection != nil
+                ? try? await PluckkAPI.shared.cards(token: token, tag: collection!.tag, limit: Self.pageSize, offset: cards.count)
                 : try? await PluckkAPI.shared.cards(token: token, folderId: deck.folder_id, limit: Self.pageSize,
                                                     offset: cards.count, state: wanted.state, tag: wanted.tag)
             guard let page = fetched, wanted == filter else { return }
@@ -521,18 +532,36 @@ private struct CardTile: View {
 }
 
 
-/// The Decks page: flagged cards and every deck down the side, and the chosen one's cards and
-/// editor beside it. Statistics opens a deck here; the rail's flag opens Flagged.
+/// Cards gathered from every deck by a tag: the ones flagged for rework, and the leeches (cards
+/// forgotten again and again). Each sits above the decks on the Decks page.
+enum CardCollection: String, CaseIterable, Identifiable {
+    case flagged, leeches
+
+    /// `AppState.openDeckId` when this collection is showing rather than a deck.
+    var id: String { "·" + rawValue }
+    var tag: String { self == .flagged ? Rework.tag : "leech" }
+    var title: String { self == .flagged ? "Flagged" : "Leeches" }
+    var icon: String { self == .flagged ? "flag" : "ladybug" }
+    var tint: Color { self == .flagged ? PluckkTheme.Dark.warning : Color(hex: "e5534b") }
+    var help: String {
+        self == .flagged ? "Every card you've flagged for rework, whatever its deck"
+            : "Cards you keep forgetting, whatever their deck: rework them rather than drill them"
+    }
+    var empty: String {
+        self == .flagged ? "Nothing flagged. Flag a card on its tile, in Practice or in the editor, and it collects here."
+            : "No leeches. A card becomes one after you've forgotten it several times."
+    }
+}
+
+/// The Decks page: flagged cards, leeches and every deck down the side, and the chosen one's
+/// cards and editor beside it. Statistics opens a deck here.
 struct DeckWorkspaceView: View {
     @ObservedObject private var appState = AppState.shared
     @State private var decks: [DeckSummary] = []
-    @State private var flaggedCount: Int?
+    @State private var counts: [CardCollection: Int] = [:]
     @State private var problem: String?
 
-    /// `AppState.openDeckId` when the flagged cards are showing rather than a deck.
-    static let flaggedId = "·flagged"
-
-    private var showingFlagged: Bool { appState.openDeckId == Self.flaggedId }
+    private var showing: CardCollection? { CardCollection.allCases.first { $0.id == appState.openDeckId } }
 
     private var current: DeckSummary? {
         appState.openDeckId.flatMap { id in decks.first { $0.id == id } } ?? decks.first
@@ -542,32 +571,18 @@ struct DeckWorkspaceView: View {
         HStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    Button(action: { appState.openDeckId = Self.flaggedId }) {
-                        HStack(spacing: 7) {
-                            Image(systemName: (flaggedCount ?? 0) > 0 ? "flag.fill" : "flag").font(.system(size: 11))
-                                .foregroundColor((flaggedCount ?? 0) > 0 ? PluckkTheme.Dark.warning : .secondary)
-                            Text("Flagged").font(.system(size: 13, weight: showingFlagged ? .semibold : .regular))
-                            Spacer(minLength: 4)
-                            if let n = flaggedCount { Text("\(n)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary) }
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(showingFlagged ? Color.primary.opacity(0.08) : .clear))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Every card you've flagged for rework, whatever its deck")
-                    .padding(.bottom, 12)
+                    ForEach(CardCollection.allCases) { collection in collectionRow(collection) }
                     Text("DECKS").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundColor(.secondary)
-                        .padding(.horizontal, 10).padding(.bottom, 6)
+                        .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 6)
                     ForEach(decks) { d in
                         Button(action: { appState.openDeckId = d.id }) {
                             HStack {
-                                Text(d.title).font(.system(size: 13, weight: !showingFlagged && current?.id == d.id ? .semibold : .regular)).lineLimit(1)
+                                Text(d.title).font(.system(size: 13, weight: showing == nil && current?.id == d.id ? .semibold : .regular)).lineLimit(1)
                                 Spacer(minLength: 4)
                                 Text("\(d.total)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary)
                             }
                             .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(!showingFlagged && current?.id == d.id ? Color.primary.opacity(0.08) : .clear))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(showing == nil && current?.id == d.id ? Color.primary.opacity(0.08) : .clear))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -579,12 +594,12 @@ struct DeckWorkspaceView: View {
             .scrollIndicators(.hidden)
             .frame(width: 210)
             Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
-            if showingFlagged {
-                DeckBrowserPanel(deck: DeckSummary(folder_id: nil, name: "Flagged", is_paused: false, new_per_day: nil,
-                                                   total: flaggedCount ?? 0, new: 0, due: 0),
-                                 allDecks: decks, flagged: true, onSelect: { appState.openDeckId = $0.id },
+            if let collection = showing {
+                DeckBrowserPanel(deck: DeckSummary(folder_id: nil, name: collection.title, is_paused: false, new_per_day: nil,
+                                                   total: counts[collection] ?? 0, new: 0, due: 0),
+                                 allDecks: decks, collection: collection, onSelect: { appState.openDeckId = $0.id },
                                  onChanged: { Task { await load() } })
-                    .id(Self.flaggedId)
+                    .id(collection.id)
             } else if let deck = current {
                 DeckBrowserPanel(deck: deck, allDecks: decks, onSelect: { appState.openDeckId = $0.id },
                                  onChanged: { Task { await load() } })
@@ -596,9 +611,33 @@ struct DeckWorkspaceView: View {
         .task { await load() }
     }
 
+    private func collectionRow(_ collection: CardCollection) -> some View {
+        let n = counts[collection] ?? 0
+        let on = showing == collection
+        return Button(action: { appState.openDeckId = collection.id }) {
+            HStack(spacing: 7) {
+                Image(systemName: n > 0 && collection == .flagged ? "flag.fill" : collection.icon).font(.system(size: 11))
+                    .foregroundColor(n > 0 ? collection.tint : .secondary)
+                    .frame(width: 14)
+                Text(collection.title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Spacer(minLength: 4)
+                if counts[collection] != nil { Text("\(n)").font(.system(size: 11).monospacedDigit()).foregroundColor(.secondary) }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(collection.help)
+    }
+
     private func load() async {
         guard let token = AuthManager.shared.accessToken else { return }
         do { decks = try await PluckkAPI.shared.reviewDecks(token: token) } catch { problem = "Couldn't load your decks." }
-        if let cards = try? await PluckkAPI.shared.cards(token: token, tag: Rework.tag, limit: 500, offset: 0) { flaggedCount = cards.count }
+        for collection in CardCollection.allCases {
+            if let cards = try? await PluckkAPI.shared.cards(token: token, tag: collection.tag, limit: 500, offset: 0) {
+                counts[collection] = cards.count
+            }
+        }
     }
 }

@@ -147,9 +147,9 @@ final class PracticeSession: ObservableObject {
             do {
                 let counts = try await PluckkAPI.shared.reviewToday(token: token)
                 if request == countsRequest { todayCounts = counts }
-                // Nothing due and no new cards left: the day is done, which the site gate remembers
-                // until midnight even if tomorrow's batch arrives this evening.
-                if counts.review == 0 && counts.learn == 0 { SiteGate.shared.noteDayFinished() }
+                // The site gate hears what's left. Nothing due and no new cards: the day is done,
+                // which it remembers until midnight even if tomorrow's batch arrives this evening.
+                SiteGate.shared.noteToday(left: counts.review + counts.learn)
             } catch {
                 if OfflineStore.isNetworkError(error), request == countsRequest, let counts = OfflineStore.shared.today() {
                     todayCounts = counts
@@ -174,6 +174,10 @@ final class PracticeSession: ObservableObject {
 
     func applyExternalTags(cardId: String, tags: [String]) {
         for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
+    }
+
+    func applyExternalWikipedia(cardId: String, title: String?) {
+        for i in queue.indices where queue[i].card_id == cardId { queue[i].wikipedia = title }
     }
 
     func removeCardExternally(_ cardId: String) {
@@ -226,6 +230,27 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var aheadState = AheadState.none
 
     func start() { deal(ahead: nil) }
+
+    /// The queue ran out: deal whatever is due now and keep going in the same session (count,
+    /// undo and timer carry on), or finish when nothing is.
+    private func continueIfMoreDue() {
+        guard let token = AuthManager.shared.accessToken else { phase = .done; return }
+        phase = .loading
+        let focus: String?? = focusDeck.map { $0.folder_id }
+        Task {
+            // Each rating is saved (and rescheduled) before the next card shows, so what the
+            // server deals now is due now.
+            let fresh = (try? await dealScheduled(token: token, focus: focus, ahead: nil)) ?? []
+            guard case .loading = phase, index >= queue.count else { return }
+            if fresh.isEmpty {
+                phase = .done
+            } else {
+                queue += fresh
+                phase = .reviewing
+            }
+            refreshTodayCounts()
+        }
+    }
 
     func practiceAhead(_ count: Int) { deal(ahead: count) }
 
@@ -759,7 +784,12 @@ final class PracticeSession: ObservableObject {
         reading = nil
         deeper = false
         shownAt = Date()
-        if index >= queue.count { phase = .done }
+        if index >= queue.count {
+            // Out of cards. Before calling it done, see whether more came due while practising
+            // (a missed card's short step, the other side of a two-way card): those carry on in
+            // this session rather than needing another start.
+            if practiceRun == nil { continueIfMoreDue() } else { phase = .done }
+        }
         if celebrateAfterThisCard {
             celebrateAfterThisCard = false
             sprintEnded()
@@ -836,7 +866,7 @@ struct PracticeView: View {
         .onChange(of: session.deeper) { open in
             // The first time it's opened for a card, find its article: the question's words and the answer's.
             guard open, let item = session.current else { return }
-            wiki.start(cardId: item.card_id, question: item.shownQuestion, answer: item.answer, deck: item.folder?.name)
+            wiki.start(cardId: item.card_id, stored: item.wikipedia)
         }
     }
 
@@ -1103,7 +1133,7 @@ struct PracticeView: View {
         Button(action: { session.toggleDeeper() }) {
             HStack(spacing: 5) {
                 Text("W").font(.system(size: 11, weight: .semibold, design: .serif))
-                Text(session.deeper ? "Hide Wikipedia" : WikiPick.remembered(item.card_id).map { "Wikipedia · \($0)" } ?? "Wikipedia")
+                Text(session.deeper ? "Hide Wikipedia" : item.wikipedia.map { "Wikipedia · \($0)" } ?? "Wikipedia")
                     .lineLimit(1)
             }
             .font(.system(size: 11))
@@ -1544,7 +1574,7 @@ struct SprintCelebration: View {
                 .frame(maxWidth: 320)
                 .opacity(showGrid ? 1 : 0)
                 .offset(y: showGrid ? 0 : 6)
-            if showGrid && (gate.sessionEarned || gate.isOpen) {
+            if showGrid && (gate.earned != nil || gate.isOpen) {
                 SiteGateOffer(dayDone: false)
                 Button("Keep practising") { finish() }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
@@ -1560,7 +1590,7 @@ struct SprintCelebration: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeOut(duration: 0.35)) { showGrid = true }
             try? await Task.sleep(nanoseconds: 2_350_000_000)
-            if !gate.sessionEarned { finish() }     // earned minutes wait to be taken
+            if gate.earned == nil { finish() }     // earned minutes wait to be taken
         }
     }
 
