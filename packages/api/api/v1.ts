@@ -20,7 +20,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { del, list, put } from '@vercel/blob';
 import { CLAUDE_FAST_MODEL, extractJson, responseText } from '../lib/models.js';
 import type { ClaudeResponse } from '../lib/claude-types.js';
-import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema, studyDayStart, SESSION_PASS_REVIEWS, SESSION_PASS_WINDOW_MINUTES, renderComponent } from '@pluckk/core';
+import { DEFAULT_MECHANICS, MAIN_COMPONENT, SCHEDULER_ID, INTERVAL_CONFIDENCE, createCardBodySchema, forecastWorkload, intervalScoreBodySchema, parseBody, patchCardBodySchema, practiceBodySchema, componentIdsOf, defaultScheduler, difficultyScore, learningCap, gatedNewPerDay, isLeechLapse, STILL_LEARNING_DAYS, learningStats, rateInterval, reviewSubmitBodySchema, reviewUndoBodySchema, studyDayStart, PASS_EVIDENCE_REVIEWS, PASS_EVIDENCE_WINDOW_MINUTES, renderComponent } from '@pluckk/core';
 import { getDb, schema } from '../lib/db.js';
 import { authenticateRequest, isAuthError, issueToken, revokeToken } from '../lib/auth.js';
 import { CardError, createCard, deleteCard, patchCard, reviewCard, setCardImage, undoEvent, unfileCardsOfFolder, specOf, getCardRow } from '../lib/cards.js';
@@ -1012,10 +1012,10 @@ const gateKey = () => process.env.GATE_SECRET
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 const passSignature = (body: string) => createHmac('sha256', gateKey()).update(body).digest('base64url');
 
-// A pass for the gated sites. Earned by finishing the day's cards, or (`session: true`) by a
-// practice session just finished: the Mac app asks for those only once the day has been finished
-// once, when a later batch has arrived. A session's pass needs ratings from the last half day to
-// show for it.
+// A pass for the gated sites. Given outright while nothing is due. With cards due it takes
+// `session: true`: the Mac app's word that a window was earned (by a practice session, or by
+// finishing what was due before more came in) and not yet used. The app judges that; here it
+// only needs some practice in the last day to show for it.
 router.on('POST', 'gate/pass', authed(async (req, res, user) => {
   const minutes = Math.max(1, Math.min(60, Math.round(Number((req.body ?? {}).minutes) || 5)));
   const settings = await getStudySettings(user.id);
@@ -1029,10 +1029,10 @@ router.on('POST', 'gate/pass', authed(async (req, res, user) => {
     if ((req.body ?? {}).session === true) {
       const r = await getDb().execute(sql`
         select count(*)::int as n from review_logs
-        where user_id = ${user.id} and reviewed_at >= now() - make_interval(mins => ${SESSION_PASS_WINDOW_MINUTES})`);
+        where user_id = ${user.id} and reviewed_at >= now() - make_interval(mins => ${PASS_EVIDENCE_WINDOW_MINUTES})`);
       recent = (r.rows[0] as { n: number } | undefined)?.n ?? 0;
     }
-    if (recent < SESSION_PASS_REVIEWS) { res.status(403).json({ error: "Today's cards aren't done yet", ...left }); return; }
+    if (recent < PASS_EVIDENCE_REVIEWS) { res.status(403).json({ error: "Today's cards aren't done yet", ...left }); return; }
   }
   const until = Date.now() + minutes * 60000;
   const body = `${user.id}.${until}`;

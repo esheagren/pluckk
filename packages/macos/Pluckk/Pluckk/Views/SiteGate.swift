@@ -107,7 +107,8 @@ final class SiteGate: ObservableObject {
         objectWillChange.send()
     }
 
-    /// A window earned by a practice session and not yet used. It lapses at midnight.
+    /// A window earned (by a practice session, or by finishing what was due) and not yet used.
+    /// It lapses at midnight.
     var sessionEarned: Bool { defaults.string(forKey: Self.sessionDayKey) == Self.today() }
 
     /// A timed session ran its course. Once the day has been finished, one that's long enough and
@@ -127,6 +128,14 @@ final class SiteGate: ObservableObject {
         // Cards waiting since the last window: clearing them is what earns the next one.
         if left > 0 && !defaults.bool(forKey: Self.leftSinceKey) { defaults.set(true, forKey: Self.leftSinceKey) }
         if dayIsDone != (left == 0) { dayIsDone = left == 0 }
+        // Finishing earns the window there and then, and it's kept until it's used (or midnight).
+        // "Nothing left" doesn't last: cards due later today keep coming into the count, a few an
+        // hour, so a window that depended on the count still being zero when the site is visited
+        // would often be gone by then.
+        if left == 0 && cardsToNextWindow == 0 && !isOpen && !sessionEarned {
+            defaults.set(Self.today(), forKey: Self.sessionDayKey)
+            objectWillChange.send()
+        }
     }
 
     /// There have been cards to do since the last window (a new batch came in, say).
@@ -165,10 +174,13 @@ final class SiteGate: ObservableObject {
     }
 
     /// A signed pass from Pluckk's server, which the Learn Gate extension in Chrome opens on.
+    /// A kept window is asked for as a session's: the server gives the day's pass only while
+    /// nothing is due at that very moment, and a card may have come due since the window was earned.
     private func pass(_ earned: Earned) async -> String? {
+        let kept = earned == .session || sessionEarned
         guard let token = AuthManager.shared.accessToken,
               let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/gate/pass",
-                                                         json: earned == .session ? ["minutes": minutes, "session": true] : ["minutes": minutes]),
+                                                         json: kept ? ["minutes": minutes, "session": true] : ["minutes": minutes]),
               let pass = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         return pass["token"] as? String
     }

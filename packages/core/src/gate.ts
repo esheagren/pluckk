@@ -9,11 +9,14 @@ export const SESSION_PASS_MINUTES = 4;
 export const SESSION_PASS_REVIEWS = 10;
 
 /**
- * How far back the server looks for those ratings when asked for a session's pass. Generous,
- * because earned minutes can be taken any time until midnight; the session itself is judged
- * where it happened (the Mac app), and this only checks there was practice to show for it.
+ * What the server asks to see before signing a window the Mac app says was earned while cards
+ * are due: some practice in the last day. The window is judged where it was earned (the Mac
+ * app); it's kept until midnight, and the due count rarely stays at zero that long, because
+ * cards due later in the day keep coming into it. So the server doesn't re-judge, it only
+ * refuses a pass with no practice behind it.
  */
-export const SESSION_PASS_WINDOW_MINUTES = 12 * 60;
+export const PASS_EVIDENCE_REVIEWS = 1;
+export const PASS_EVIDENCE_WINDOW_MINUTES = 24 * 60;
 
 /** Whether a practice session earns a window: long enough, with enough cards rated. */
 export function sessionEarnsPass(minutes: number, reviews: number): boolean {
