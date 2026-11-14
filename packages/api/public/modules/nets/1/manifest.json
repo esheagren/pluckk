@@ -1,0 +1,72 @@
+{
+  "id": "nets",
+  "version": "1.0.0",
+  "title": "Neural networks, side by side",
+  "slots": [
+    "prompt",
+    "reveal"
+  ],
+  "describe": "Runs one short sequence of words through different neural network architectures, all drawn the same way (time left to right, one column per word; depth bottom to top: input, hidden units, output), so they can be told apart by what each can see when a word goes in. Each hidden cell is banded in the colours of the words that sway it. `arch` is the one shown first: feedforward (no links between columns, so each answer comes from the current word alone: no memory), rnn (the hidden state is fed into the next step, so earlier words linger and fade; the last step says how far the first word has faded) or attention (each position looks straight back at every earlier word, weighted by relevance rather than distance). `compare` lists which architectures get a tab; switching tabs stays on the same word. With a one-word `sequence`, feedforward is a plain multilayer perceptron stepped through layer by layer (`layers` 1 to 3). Back / Next / Play controls. The activations and percentages are really computed from a small network with seeded made-up weights; `memory` (0 to 1.2) sets how strongly the RNN's state feeds back. Use it on cards about what a feedforward network, MLP or RNN is, how they differ, hidden state, sequence memory, fading memory over long sequences, or attention.",
+  "props": {
+    "type": "object",
+    "properties": {
+      "arch": {
+        "enum": [
+          "feedforward",
+          "rnn",
+          "attention"
+        ],
+        "default": "rnn",
+        "description": "The architecture shown first"
+      },
+      "compare": {
+        "type": "array",
+        "items": {
+          "enum": [
+            "feedforward",
+            "rnn",
+            "attention"
+          ]
+        },
+        "description": "Architectures that get a tab (default: all three; [] for no tabs)"
+      },
+      "sequence": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 8,
+        "description": "The words fed in, one per step (default: The cat sat on the mat)"
+      },
+      "hidden": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 8,
+        "default": 4,
+        "description": "Units in a hidden layer"
+      },
+      "layers": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3,
+        "default": 1,
+        "description": "Hidden layers in the feedforward network"
+      },
+      "memory": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1.2,
+        "default": 0.75,
+        "description": "How strongly the RNN's state feeds back (0: none, so it behaves like the feedforward network)"
+      },
+      "seed": {
+        "type": "integer",
+        "default": 7
+      },
+      "autoplay": {
+        "type": "boolean",
+        "default": false
+      }
+    }
+  }
+}

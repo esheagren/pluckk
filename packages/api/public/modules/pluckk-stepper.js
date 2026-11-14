@@ -6,7 +6,9 @@
 //     steps: [{ caption: 'Pick 3 starting centroids', ...anything }],
 //     render(step, t, index) { ...draw... },
 //     duration: 450,            // ms per transition
+//     start: 0,                 // the step to open on
 //   });
+// mount returns { redraw(), index() }: draw the current step again, and which step that is.
 (function () {
   const css = `
     .ps-bar { display: flex; align-items: center; gap: 6px; justify-content: center; padding-top: 8px; }
@@ -19,7 +21,7 @@
       min-height: 42px; padding: 8px 12px 0; }`;
   const ease = (t) => 1 - Math.pow(1 - t, 3);
 
-  function mount(root, { steps, render, duration = 450, autoplay = false, interval = 1400 }) {
+  function mount(root, { steps, render, duration = 450, autoplay = false, interval = 1400, start = 0 }) {
     const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
     root.innerHTML = `<div class="ps-caption"></div><div class="ps-bar">
       <button data-a="restart" title="Back to the start">⟲</button>
@@ -60,9 +62,9 @@
       if (a === 'restart') show(0, false);
       if (a === 'play') timer ? stop() : play();
     });
-    show(0, false);
+    show(start, false);
     if (autoplay) play();
-    return { redraw: () => render(steps[i], 1, i) };
+    return { redraw: () => render(steps[i], 1, i), index: () => i };
   }
 
   window.PluckkStepper = { mount };

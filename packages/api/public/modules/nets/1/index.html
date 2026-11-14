@@ -1,0 +1,376 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; }
+  body { font: 13px -apple-system, system-ui, sans-serif; color: var(--text, #333); }
+  .tabs { display: flex; gap: 6px; justify-content: center; padding: 2px 0 10px; }
+  .tabs button { font: 12px -apple-system, system-ui, sans-serif; color: var(--muted, #999); background: transparent;
+    border: 1px solid var(--rule, #ddd); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+  .tabs button:hover { color: var(--text, #333); }
+  .tabs button.on { color: var(--text, #333); border-color: var(--accent, #c9a66b); }
+  svg { display: block; width: 100%; }
+  svg text { font: 12px -apple-system, system-ui, sans-serif; }
+  .note { font: 11px -apple-system, system-ui, sans-serif; color: var(--muted, #999); text-align: center; padding: 8px 12px 0; }
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs"></div>
+<svg id="fig" xmlns="http://www.w3.org/2000/svg"></svg>
+<div id="controls"></div>
+<div class="note">A tiny network with made-up weights. The shading and percentages are computed from it, not drawn by hand.</div>
+<script src="../../pluckk-module.js"></script>
+<script src="../../pluckk-stepper.js"></script>
+<script>
+// nets@1 — one short sequence run through different neural network architectures, drawn the same
+// way, so they can be told apart by what each can "see" when a word goes in.
+//
+// props: { arch = "rnn", compare = ["feedforward", "rnn", "attention"], sequence = [words],
+//          hidden = 4, layers = 1, memory = 0.75, seed = 7, autoplay = false }
+//
+// The picture: time runs left to right (one column per word), depth runs bottom to top (input,
+// hidden layer(s), output). Each hidden cell is banded in the colours of the words that sway it,
+// in proportion: that band is the thing to compare across architectures.
+//   feedforward  no sideways links: every column is one pure colour (no memory).
+//   rnn          the hidden state feeds the next column: earlier colours linger and fade.
+//   attention    every position draws straight from every earlier word, by weight not distance.
+// With a one-word sequence the feedforward view is a plain multilayer perceptron, stepped through
+// layer by layer.
+//
+// To add an architecture: add an entry to ARCHS with a label, compute(model) returning one
+// { layers: [unit activations per hidden layer], out, shares: [sway of words 0..t] } per position,
+// steps(model, cols) returning the captions, and links ("none" | "state" | "attention") for what
+// is drawn between columns. Nothing else needs to change.
+// One colour per word in the sequence. None is the theme's accent, which the state arrows use.
+const TOKEN_COLORS = ['#e07a5f', '#3d9be9', '#81b29a', '#9b8ce0', '#e5c14b', '#5fb8c2', '#d77fa1', '#8fbf5a'];
+const ORDER = ['feedforward', 'rnn', 'attention'];
+
+function rng(seed) {   // mulberry32: the same props always give the same network
+  let a = seed >>> 0;
+  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+const matrix = (rows, cols, f) => Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => f(i, j)));
+const times = (A, B) => A.map((row) => B[0].map((_, j) => row.reduce((s, a, k) => s + a * B[k][j], 0)));
+const apply = (A, v) => A.map((row) => row.reduce((s, a, k) => s + a * v[k], 0));
+const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+const size = (A) => Math.sqrt(A.reduce((s, row) => s + row.reduce((q, a) => q + a * a, 0), 0));
+const scaleRows = (A, d) => A.map((row, i) => row.map((a) => a * d[i]));     // diag(d) · A
+const tanh = (v) => v.map(Math.tanh);
+const slope = (h) => h.map((x) => 1 - x * x);                                  // tanh′ at each unit
+const share = (xs) => { const s = xs.reduce((a, b) => a + b, 0) || 1; return xs.map((x) => x / s); };
+
+/** The largest factor by which U can stretch a vector (power iteration on UᵀU). */
+function stretch(U) {
+  let v = U[0].map(() => 1);
+  const Ut = U[0].map((_, j) => U.map((row) => row[j]));
+  for (let i = 0; i < 40; i++) {
+    const w = apply(Ut, apply(U, v));
+    const n = Math.sqrt(dot(w, w)) || 1;
+    v = w.map((x) => x / n);
+  }
+  return Math.sqrt(dot(apply(U, v), apply(U, v)));
+}
+
+function build(props) {
+  const words = (Array.isArray(props.sequence) && props.sequence.length ? props.sequence : ['The', 'cat', 'sat', 'on', 'the', 'mat'])
+    .slice(0, 8).map(String);
+  const d = Math.max(2, Math.min(8, Math.round(props.hidden || 4)));
+  const L = Math.max(1, Math.min(3, Math.round(props.layers || 1)));
+  const memory = Math.max(0, Math.min(1.2, props.memory == null ? 0.75 : Number(props.memory)));
+  const r = rng(props.seed == null ? 7 : props.seed);
+  const g = () => gauss(r);
+  const x = words.map(() => Array.from({ length: d }, g));                    // one vector per word in the sequence
+  const W = Array.from({ length: L }, () => matrix(d, d, () => 1.25 * g() / Math.sqrt(d)));   // layer weights
+  let U = matrix(d, d, g);                                                     // the loop: state → next state
+  const s = stretch(U) || 1;
+  U = U.map((row) => row.map((a) => (a / s) * memory));
+  const Q = matrix(d, d, g), K = matrix(d, d, g);                              // attention: what to look for, what's on offer
+  const v = Array.from({ length: d }, g);
+  return { words, d, L, x, W, U, Q, K, v, memory };
+}
+
+const quote = (w) => `“${w}”`;
+/** "cat 62%, The 38%": whole percentages that add to 100, most recent word first or largest first. */
+function swayText(words, shares, largestFirst) {
+  const raw = shares.map((s) => s * 100), pct = raw.map(Math.floor);
+  let left = 100 - pct.reduce((a, b) => a + b, 0);
+  raw.map((x, j) => ({ j, f: x - Math.floor(x) })).sort((a, b) => b.f - a.f).forEach(({ j }) => { if (left > 0) { pct[j]++; left--; } });
+  const items = pct.map((p, j) => ({ j, p })).reverse();
+  if (largestFirst) items.sort((a, b) => b.p - a.p);
+  const shown = items.slice(0, 5).filter((x) => x.p > 0), rest = items.slice(5).reduce((a, b) => a + b.p, 0);
+  return shown.map(({ j, p }) => `${words[j]} ${p}%`).join(', ') + (rest > 0 ? `, ${largestFirst ? 'the rest' : 'earlier words'} ${rest}%` : '');
+}
+
+const ARCHS = {
+  feedforward: {
+    label: 'Feedforward',
+    links: 'none',
+    compute(m) {
+      return m.x.map((x, t) => {
+        const layers = [];
+        let h = x;
+        for (const W of m.W) { h = tanh(apply(W, h)); layers.push(h); }
+        return { layers, out: Math.tanh(dot(m.v, h)), shares: m.x.slice(0, t + 1).map((_, j) => (j === t ? 1 : 0)) };
+      });
+    },
+    steps(m) {
+      const n = m.words.length;
+      if (n === 1) {   // a plain multilayer perceptron, one layer at a time
+        const steps = [{ active: -1, caption: `A multilayer perceptron: an input, ${m.L === 1 ? 'a hidden layer' : `${m.L} hidden layers`} of units, an output. Every unit feeds every unit in the layer above, and nothing flows back down.` }];
+        for (let l = 1; l <= m.L; l++) {
+          steps.push({ active: 0, upTo: l, caption: l === 1
+            ? 'The input reaches the first hidden layer. Each unit adds up what it is sent, weighted, and squashes the total: the more filled-in the unit, the more active.'
+            : `Hidden layer ${l - 1} feeds hidden layer ${l} the same way: weighted sums, then a squash.` });
+        }
+        steps.push({ active: 0, upTo: m.L + 1, caption: 'The last hidden layer feeds the output. That is one forward pass: input in, answer out, in one direction.' });
+        return steps;
+      }
+      const steps = [{ active: -1, caption: 'A feedforward network. Information moves one way: up from the input, through the hidden layer, to the output. Each column is the same network, given one word.' }];
+      m.words.forEach((w, t) => steps.push({ active: t, caption: t === 0
+        ? `${quote(w)} goes in and flows up to the output.`
+        : `${quote(w)} goes in. Nothing carries over from ${quote(m.words[t - 1])}: this answer is worked out from ${quote(w)} alone.${t === n - 1 ? ' A feedforward network has no memory of earlier inputs.' : ''}` }));
+      return steps;
+    },
+  },
+
+  rnn: {
+    label: 'Recurrent (RNN)',
+    links: 'state',
+    compute(m) {
+      const W = m.W[0], cols = [];
+      let h = m.x[0].map(() => 0);
+      // sway[k] = ∂h_t/∂x_k, how far the state now would move if word k had been different.
+      let sway = [];
+      m.x.forEach((x, t) => {
+        h = tanh(apply(W, x).map((a, i) => a + apply(m.U, h)[i]));
+        const D = slope(h);
+        const carry = scaleRows(m.U, D);                         // ∂h_t/∂h_{t−1}
+        sway = sway.map((J) => times(carry, J));
+        sway.push(scaleRows(W, D));                              // ∂h_t/∂x_t
+        cols.push({ layers: [h], out: Math.tanh(dot(m.v, h)), shares: share(sway.map(size)) });
+      });
+      return cols;
+    },
+    steps(m, cols) {
+      const n = m.words.length;
+      const steps = [{ active: -1, caption: 'A recurrent network is a feedforward network with one loop added: the hidden state is fed back in at the next step. Drawn out step by step, the loop is the arrow running left to right.' }];
+      m.words.forEach((w, t) => steps.push({ active: t, caption: t === 0
+        ? `${quote(w)} goes in. The hidden state now holds a trace of ${quote(w)}: the coloured band.`
+        : `${quote(w)} goes in along with the state from the step before. What sways the new state: ${swayText(m.words, cols[t].shares)}.` }));
+      if (n > 2) {
+        const first = Math.round(cols[n - 1].shares[0] * 100);
+        steps.push({ active: n - 1, caption: `By ${quote(m.words[n - 1])}, ${quote(m.words[0])} is down to ${first < 1 ? 'under 1' : first}%. The state is a fading summary: recent words dominate and old ones wash out, the weakness LSTMs and attention were built to fix.` });
+      }
+      return steps;
+    },
+  },
+
+  attention: {
+    label: 'Attention',
+    links: 'attention',
+    everythingAtOnce: true,
+    compute(m) {
+      const W = m.W[0];
+      const q = m.x.map((x) => apply(m.Q, x)), k = m.x.map((x) => apply(m.K, x));
+      return m.x.map((_, t) => {
+        // How well what position t is looking for matches what word j offers: the angle between
+        // the two vectors, sharpened a little so the weights are neither flat nor all-or-nothing.
+        const match = (a, b) => dot(a, b) / (Math.sqrt(dot(a, a) * dot(b, b)) || 1);
+        const scores = m.x.slice(0, t + 1).map((__, j) => 2.2 * match(q[t], k[j]));
+        const top = Math.max(...scores);
+        const weights = share(scores.map((s) => Math.exp(s - top)));
+        const mix = m.x[0].map((__, i) => weights.reduce((s, w, j) => s + w * m.x[j][i], 0));
+        const h = tanh(apply(W, mix));
+        return { layers: [h], out: Math.tanh(dot(m.v, h)), shares: weights };
+      });
+    },
+    steps(m, cols) {
+      const steps = [{ active: -1, caption: 'Attention has no loop. Every word is available at once, and each position looks straight back at the words before it. All positions are worked out in parallel.' }];
+      m.words.forEach((w, t) => steps.push({ active: t, caption: t === 0
+        ? `${quote(w)} has only itself to look at.`
+        : `${quote(w)} looks straight back at every earlier word and weighs them by relevance, not by how long ago they were: ${swayText(m.words, cols[t].shares, true)}.` }));
+      return steps;
+    },
+  },
+};
+
+// ---------------------------------------------------------------- drawing
+const fig = document.getElementById('fig');
+let model = null, arch = 'rnn', cols = [], player = null, props = {}, clips = 0;
+
+function geometry() {
+  const W = document.body.clientWidth || 600, n = model.words.length, d = model.d;
+  const L = arch === 'feedforward' ? model.L : 1;
+  const gutter = W >= 420 ? 46 : 0;
+  const pitch = (W - gutter - 8) / n;
+  const single = n === 1;
+  const gap = single ? 14 : 4;
+  const r = Math.max(3.5, Math.min(single ? 10 : 8, (Math.min(pitch, 190) * 0.62 - (d - 1) * gap) / (2 * d)));
+  const rowW = d * 2 * r + (d - 1) * gap, cellW = rowW + 12, cellH = 2 * r + 10;
+  const strip = 7;                                   // the bar under a cell: which words sway it, to scale
+  const rOut = r + 2, rise = 40, inRise = 56;        // the same for every architecture, so switching tabs doesn't resize the card
+  const yOut = 6 + rOut;
+  const yH = [];   // index 1..L, 1 nearest the input
+  for (let l = L; l >= 1; l--) yH[l] = yOut + rOut + rise + cellH / 2 + (L - l) * (cellH + rise);
+  const yIn = yH[1] + cellH / 2 + inRise + 11;
+  const cx = (i) => gutter + pitch * (i + 0.5);
+  const ux = (i, u) => cx(i) - rowW / 2 + r + u * (2 * r + gap);
+  return { W, H: yIn + 11 + 6, n, d, L, gutter, pitch, r, rowW, cellW, cellH, strip, rOut, yOut, yH, yIn, cx, ux };
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const color = (j) => TOKEN_COLORS[j % TOKEN_COLORS.length];
+
+function draw(step, tt) {
+  const g = geometry(), A = ARCHS[arch], active = step.active;
+  const parts = [];
+  const add = (s) => parts.push(s);
+  clips = 0;
+  // How far along each column is: 0 not yet, 1 worked out; the column being worked on eases in.
+  const reach = (i) => {
+    if (active < 0) return 0;
+    if (A.everythingAtOnce) return 1;
+    return i < active ? 1 : i === active ? tt : 0;
+  };
+  const dim = (i) => (active < 0 ? 0.55 : reach(i) > 0 || A.everythingAtOnce ? 1 : 0.32);
+  // In a one-word perceptron the layers light up one at a time.
+  const layerOn = (l) => (step.upTo == null ? 1 : l < step.upTo ? 1 : l === step.upTo ? tt : 0);
+
+  if (g.gutter) {
+    const label = (y, text) => add(`<text x="0" y="${y + 4}" style="fill:var(--muted,#999);font-size:10px">${text}</text>`);
+    label(g.yOut, 'output');
+    for (let l = g.L; l >= 1; l--) label(g.yH[l], g.L > 1 ? `hidden ${l}` : 'hidden');
+    label(g.yIn, 'input');
+  }
+
+  for (let i = 0; i < g.n; i++) {
+    const c = cols[i], on = reach(i), x = g.cx(i);
+    add(`<g opacity="${dim(i)}">`);
+    const strips = [];   // drawn after the wires, so they sit over them
+    // cells: one per hidden layer, banded by which words sway it
+    for (let l = 1; l <= g.L; l++) {
+      const y = g.yH[l], left = x - g.cellW / 2, top = y - g.cellH / 2, lit = on * layerOn(l);
+      if (lit > 0 && g.n > 1) {   // with one word there's nothing to tell apart
+        // A soft tint behind the units, and the exact make-up in a strip beneath.
+        const id = `clip${clips++}`, bar = top + g.cellH + 3;
+        add(`<clipPath id="${id}"><rect x="${left}" y="${top}" width="${g.cellW}" height="${g.cellH}" rx="7"/></clipPath><g clip-path="url(#${id})">`);
+        strips.push(`<clipPath id="${id}s"><rect x="${left}" y="${bar}" width="${g.cellW}" height="${g.strip}" rx="3.5"/></clipPath><g clip-path="url(#${id}s)">`);
+        let at = left;
+        c.shares.forEach((s, j) => {
+          const w = s * g.cellW;
+          if (w > 0.05) {
+            add(`<rect x="${at}" y="${top}" width="${w + 0.5}" height="${g.cellH}" fill="${color(j)}" fill-opacity="${0.3 * lit}"/>`);
+            strips.push(`<rect x="${at}" y="${bar}" width="${w + 0.5}" height="${g.strip}" fill="${color(j)}" fill-opacity="${lit}"/>`);
+          }
+          at += w;
+        });
+        add('</g>');
+        strips.push('</g>');
+      }
+      add(`<rect x="${left}" y="${top}" width="${g.cellW}" height="${g.cellH}" rx="7" fill="none" style="stroke:var(--rule,#ddd)" ${on > 0 ? '' : 'stroke-dasharray="3 3"'}/>`);
+    }
+    // wires: input → first hidden layer (attention draws its own, below), layer → layer, last → output
+    const wire = (x1, y1, x2, y2, o) => add(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(--muted,#999)" stroke-width="0.7" opacity="${o}"/>`);
+    if (A.links !== 'attention') {
+      for (let u = 0; u < g.d; u++) wire(x, g.yIn - 11, g.ux(i, u), g.yH[1] + g.r, 0.3 + 0.4 * on * layerOn(1));
+    }
+    for (let l = 1; l < g.L; l++) {
+      for (let a = 0; a < g.d; a++) for (let b = 0; b < g.d; b++) wire(g.ux(i, a), g.yH[l] - g.r, g.ux(i, b), g.yH[l + 1] + g.r, 0.22 + 0.33 * on * layerOn(l + 1));
+    }
+    for (let u = 0; u < g.d; u++) wire(g.ux(i, u), g.yH[g.L] - g.r, x, g.yOut + g.rOut, 0.3 + 0.4 * on * layerOn(g.L + 1));
+    strips.forEach(add);
+    // units
+    for (let l = 1; l <= g.L; l++) {
+      const lit = on * layerOn(l);
+      for (let u = 0; u < g.d; u++) {
+        const a = Math.abs(c.layers[l - 1][u]);
+        add(`<circle cx="${g.ux(i, u)}" cy="${g.yH[l]}" r="${g.r}" style="fill:var(--text,#333);stroke:var(--muted,#999)" fill-opacity="${(0.1 + 0.8 * a) * lit}" stroke-width="1"/>`);
+      }
+    }
+    const outLit = on * layerOn(g.L + 1);
+    add(`<circle cx="${x}" cy="${g.yOut}" r="${g.rOut}" style="fill:var(--text,#333);stroke:var(--muted,#999)" fill-opacity="${(0.1 + 0.8 * Math.abs(c.out)) * outLit}" stroke-width="1"/>`);
+    // the word going in
+    const word = model.words[i], pillW = Math.max(30, Math.min(g.pitch - 8, word.length * 7.4 + 18));
+    const here = i === active;
+    add(`<rect x="${x - pillW / 2}" y="${g.yIn - 11}" width="${pillW}" height="22" rx="11" fill="${color(i)}" fill-opacity="${here ? 0.3 : 0.14}" stroke="${color(i)}" stroke-width="${here ? 1.8 : 1.1}"/>`);
+    add(`<text x="${x}" y="${g.yIn + 4}" text-anchor="middle" style="fill:var(--text,#333)">${esc(word)}</text>`);
+    add('</g>');
+  }
+
+  // between the columns
+  if (A.links === 'state') {
+    for (let i = 1; i < g.n; i++) {
+      const on = active < 0 ? 1 : reach(i), y = g.yH[1];
+      const x1 = g.cx(i - 1) + g.cellW / 2 + 2, x2 = g.cx(i) - g.cellW / 2 - 3;
+      const tip = x1 + (x2 - x1) * (active < 0 || i !== active ? 1 : Math.max(0.15, tt));
+      add(`<g opacity="${active < 0 ? 0.9 : on > 0 ? 1 : 0.3}" style="stroke:var(--accent,#c9a66b);fill:var(--accent,#c9a66b)">
+        <line x1="${x1}" y1="${y}" x2="${tip - 5}" y2="${y}" stroke-width="2.2"/>
+        <path d="M${tip} ${y} l-7 -4.2 v8.4 z" stroke="none"/></g>`);
+    }
+    if (g.n > 1 && g.pitch - g.cellW > 30) {
+      const mx = (g.cx(0) + g.cx(1)) / 2;
+      add(`<text x="${mx}" y="${g.yH[1] - 8}" text-anchor="middle" style="fill:var(--accent,#c9a66b);font-size:10px">state</text>`);
+    }
+  }
+  if (A.links === 'attention') {
+    const y1 = g.yIn - 11, y2 = g.yH[1] + g.cellH / 2 + 3 + g.strip + 2, ym = (y1 + y2) / 2;
+    for (let t = 0; t < g.n; t++) {
+      const focus = t === active;
+      cols[t].shares.forEach((w, j) => {
+        const o = focus ? (0.25 + 0.75 * Math.min(1, w * 2.2)) * tt : active < 0 ? 0.16 : 0.07;
+        add(`<path d="M${g.cx(j)} ${y1} C${g.cx(j)} ${ym}, ${g.cx(t)} ${ym}, ${g.cx(t)} ${y2}" fill="none" stroke="${focus ? color(j) : 'currentColor'}" stroke-width="${focus ? 1 + 7 * w : 0.8}" opacity="${o}" stroke-linecap="round"/>`);
+      });
+    }
+  }
+
+  fig.setAttribute('viewBox', `0 0 ${g.W} ${g.H}`);
+  fig.style.height = g.H + 'px';
+  fig.style.color = 'var(--muted, #999)';
+  fig.innerHTML = parts.join('');
+}
+
+// ---------------------------------------------------------------- controls
+function mount(start) {
+  cols = ARCHS[arch].compute(model);
+  const steps = ARCHS[arch].steps(model, cols);
+  const holder = document.getElementById('controls');
+  holder.innerHTML = '<div></div>';       // a fresh node each time: the stepper listens on what it's given
+  player = PluckkStepper.mount(holder.firstChild, { steps, render: draw, start: Math.min(start || 0, steps.length - 1), autoplay: !!props.autoplay && !start });
+}
+
+function tabs(shown) {
+  const el = document.getElementById('tabs');
+  if (shown.length < 2) { el.style.display = 'none'; return; }
+  el.innerHTML = shown.map((a) => `<button data-a="${a}" class="${a === arch ? 'on' : ''}">${ARCHS[a].label}</button>`).join('');
+  el.onclick = (e) => {
+    const a = e.target.closest('button')?.dataset.a;
+    if (!a || a === arch) return;
+    const at = player ? player.index() : 0;   // stay on the same word, so the three can be compared there
+    arch = a;
+    el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.a === arch));
+    mount(Math.min(at, model.words.length));
+  };
+}
+
+Pluckk.on('init', (m) => {
+  props = m.props || {};
+  model = build(props);
+  arch = ARCHS[props.arch] ? props.arch : 'rnn';
+  const wanted = Array.isArray(props.compare) ? props.compare.filter((a) => ARCHS[a]) : ORDER;
+  tabs(ORDER.filter((a) => a === arch || wanted.includes(a)));
+  mount(0);
+  Pluckk.ready();
+});
+Pluckk.on('theme', () => player && player.redraw());
+let lastW = 0;
+new ResizeObserver(() => {
+  if (!player || document.body.clientWidth === lastW) return;
+  lastW = document.body.clientWidth; player.redraw();
+}).observe(document.body);
+</script>
+</body>
+</html>
