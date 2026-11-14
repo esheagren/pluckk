@@ -1,0 +1,6 @@
+[
+  { "slot": "reveal", "props": { "arch": "rnn" } },
+  { "slot": "reveal", "props": { "arch": "feedforward", "compare": ["rnn"] } },
+  { "slot": "reveal", "props": { "arch": "feedforward", "compare": [], "sequence": ["input"], "layers": 2, "hidden": 5 } },
+  { "slot": "reveal", "props": { "arch": "attention", "sequence": ["The", "key", "to", "the", "old", "cabinets", "is"] } }
+]
