@@ -71,6 +71,8 @@ export async function buildItems(db: Db, userId: string, dealt: DealtItem[]) {
       modules: 'modules' in spec && spec.modules ? withSources(spec.modules, userId) : null,
       // The card's Wikipedia article: a title, null (none fits) or absent (not looked for yet).
       ...('wikipedia' in spec ? { wikipedia: spec.wikipedia ?? null } : {}),
+      // The owner's note about the card, if there is one.
+      ...('note' in spec && spec.note ? { note: spec.note } : {}),
     });
   }
   return items;

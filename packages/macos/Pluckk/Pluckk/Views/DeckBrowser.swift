@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// One deck's cards: a single toolbar line (deck, filter, search, practice), the cards in a grid,
-/// and the card that's clicked open underneath in a full editor (see CardEditorPane).
+/// and the card that's clicked shown underneath as a practice card: answer it, step to the next
+/// or the previous one, rate it as a question, and open the editor from its pencil.
 struct DeckBrowserPanel: View {
     let deck: DeckSummary
     let allDecks: [DeckSummary]
@@ -39,8 +40,9 @@ struct DeckBrowserPanel: View {
     @State private var notice: String?
     /// Cards picked with ⌘- or ⇧-click, to practise together.
     @State private var selected: [String] = []
-    /// The card open in the editor below the grid.
+    /// The card showing below the grid.
     @State private var openCard: String?
+    @ObservedObject private var browse = PracticeSession.browse
     /// The last card deleted here, for Undo.
     @State private var lastDeleted: (eventId: String, question: String)?
     @Environment(\.colorScheme) private var colorScheme
@@ -96,32 +98,39 @@ struct DeckBrowserPanel: View {
                 VStack(spacing: 0) {
                     grid
                         .frame(height: openCard == nil ? geo.size.height : max(160, geo.size.height * 0.38))
-                    if let id = openCard {
+                    if openCard != nil {
                         Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
-                        CardEditorPane(cardId: id, decks: allDecks,
-                                       onSaved: { q, a, tags, image in
-                                           if let i = cards.firstIndex(where: { $0.id == id }) {
-                                               cards[i].question = q; cards[i].answer = a; cards[i].tags = tags
-                                           }
-                                           onChanged()     // a flag set or cleared in the editor changes the Flagged count
-                                       },
-                                       onRemoved: {
-                                           cards.removeAll { $0.id == id }
-                                           openCard = nil
-                                           onChanged()
-                                       },
-                                       onDeleted: { eventId in
-                                           deleted(id, question: cards.first { $0.id == id }?.question ?? "", eventId: eventId)
-                                       },
-                                       onClose: { openCard = nil })
-                            .id(id)
+                        PracticeView(session: browse, embedded: true, onClose: { openCard = nil })
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: filter) { await reload() }
-        .onChange(of: deck.id) { _ in selected = []; openCard = nil }
+        .onChange(of: deck.id) { _ in selected = []; closeCard() }
+        .onAppear {
+            browse.onCardDeleted = { id in
+                cards.removeAll { $0.id == id }
+                onChanged()
+            }
+            browse.onCardRestored = { Task { await reload(); onChanged() } }
+        }
+        .onDisappear { closeCard() }
+        // The grid follows the card showing below: its outline, and what was changed on it there.
+        .onChange(of: browse.current?.card_id) { id in if openCard != nil, let id { openCard = id } }
+        .onReceive(browse.$queue) { queue in
+            guard openCard != nil else { return }
+            for item in queue {
+                guard let i = cards.firstIndex(where: { $0.id == item.card_id }) else { continue }
+                if item.component_count == 1, cards[i].question != item.question || cards[i].answer != item.answer {
+                    cards[i].question = item.question; cards[i].answer = item.answer
+                }
+                if cards[i].tags != item.tags {
+                    cards[i].tags = item.tags
+                    onChanged()     // a flag set or cleared changes the Flagged count
+                }
+            }
+        }
     }
 
     /// Deck, filter, search and practice, on one line.
@@ -223,7 +232,8 @@ struct DeckBrowserPanel: View {
                 ForEach(shown) { card in
                     CardTile(card: card, moveTargets: flagged ? allDecks.filter { $0.folder_id != card.folder_id } : allDecks.filter { $0.id != deck.id },
                              isSelected: selected.contains(card.id), isOpen: openCard == card.id,
-                             onOpen: { openCard = card.id },
+                             onOpen: { open(card) },
+                             onEdit: { open(card, editing: true) },
                              onPick: { pick(card, extend: $0) },
                              onPractise: { practiseRun(.init(title: Self.short(card.question), cardIds: [card.id])) },
                              onSave: { q, a in save(card, q, a) },
@@ -241,6 +251,22 @@ struct DeckBrowserPanel: View {
             }
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: The card showing below
+
+    /// Show a card below the grid as a practice card, with its neighbours to step through.
+    private func open(_ card: LibraryCard, editing: Bool = false) {
+        let ids = shown.map(\.id)
+        guard let i = ids.firstIndex(of: card.id) else { return }
+        openCard = card.id
+        browse.browse(title: deck.title, cardIds: Array(ids[max(0, i - 100)..<min(ids.count, i + 300)]), startAt: card.id, editing: editing)
+    }
+
+    private func closeCard() {
+        guard openCard != nil else { return }
+        openCard = nil
+        browse.closeBrowse()
     }
 
     // MARK: Practising picked cards
@@ -292,7 +318,7 @@ struct DeckBrowserPanel: View {
             if (collection == .flagged || (collection == nil && filter == .rework)) && !tags.contains(Rework.tag) {
                 // Unflagged while looking at flagged cards: it leaves the list.
                 cards.removeAll { $0.id == card.id }
-                if openCard == card.id { openCard = nil }
+                if openCard == card.id { closeCard() }
             } else if let i = cards.firstIndex(where: { $0.id == card.id }) {
                 cards[i].tags = tags
             }
@@ -319,7 +345,7 @@ struct DeckBrowserPanel: View {
     /// A card gone from the deck (from a tile or the editor): out of the grid, with Undo for a while.
     private func deleted(_ id: String, question: String, eventId: String?) {
         cards.removeAll { $0.id == id }
-        if openCard == id { openCard = nil }
+        if openCard == id, browse.current?.card_id == id { browse.removeCardExternally(id) }
         PracticeSession.shared.removeCardExternally(id)
         onChanged()
         guard let eventId else { return }
@@ -371,6 +397,8 @@ private struct CardTile: View {
     /// Open in the editor below the grid.
     var isOpen = false
     var onOpen: () -> Void = {}
+    /// Open it below, straight into the editor.
+    var onEdit: () -> Void = {}
     /// A ⌘- or ⇧-click: pick the card (true when ⇧ extends the pick).
     var onPick: (Bool) -> Void = { _ in }
     var onPractise: () -> Void = {}
@@ -462,7 +490,7 @@ private struct CardTile: View {
             CardIconButton(systemName: "play.fill", help: "Practise this card now (schedule unchanged)", action: onPractise)
             CardIconButton(systemName: "pencil",
                            help: card.isSimple ? "Edit" : "Two-way and list cards are edited in the web app") {
-                onOpen()
+                onEdit()
             }
             .disabled(!card.isSimple)
             Menu {
@@ -535,21 +563,57 @@ private struct CardTile: View {
 /// Cards gathered from every deck by a tag: the ones flagged for rework, and the leeches (cards
 /// forgotten again and again). Each sits above the decks on the Decks page.
 enum CardCollection: String, CaseIterable, Identifiable {
-    case flagged, leeches
+    case flagged, leeches, gold, bad
 
     /// `AppState.openDeckId` when this collection is showing rather than a deck.
     var id: String { "·" + rawValue }
-    var tag: String { self == .flagged ? Rework.tag : "leech" }
-    var title: String { self == .flagged ? "Flagged" : "Leeches" }
-    var icon: String { self == .flagged ? "flag" : "ladybug" }
-    var tint: Color { self == .flagged ? PluckkTheme.Dark.warning : Color(hex: "e5534b") }
+    var tag: String {
+        switch self {
+        case .flagged: return Rework.tag
+        case .leeches: return "leech"
+        case .gold: return CardQuality.gold.tag
+        case .bad: return CardQuality.bad.tag
+        }
+    }
+    var title: String {
+        switch self {
+        case .flagged: return "Flagged"
+        case .leeches: return "Leeches"
+        case .gold: return "Gold"
+        case .bad: return "Rated bad"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .flagged: return "flag"
+        case .leeches: return "ladybug"
+        case .gold: return "star"
+        case .bad: return "hand.thumbsdown"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .flagged: return PluckkTheme.Dark.warning
+        case .leeches: return Color(hex: "e5534b")
+        case .gold: return CardQuality.gold.tint
+        case .bad: return CardQuality.bad.tint
+        }
+    }
     var help: String {
-        self == .flagged ? "Every card you've flagged for rework, whatever its deck"
-            : "Cards you keep forgetting, whatever their deck: rework them rather than drill them"
+        switch self {
+        case .flagged: return "Every card you've flagged for rework, whatever its deck"
+        case .leeches: return "Cards you keep forgetting, whatever their deck: rework them rather than drill them"
+        case .gold: return "Cards you've rated gold: examples of what a card should be"
+        case .bad: return "Cards you've rated bad: to rewrite or delete"
+        }
     }
     var empty: String {
-        self == .flagged ? "Nothing flagged. Flag a card on its tile, in Practice or in the editor, and it collects here."
-            : "No leeches. A card becomes one after you've forgotten it several times."
+        switch self {
+        case .flagged: return "Nothing flagged. Flag a card on its tile, in Practice or in the editor, and it collects here."
+        case .leeches: return "No leeches. A card becomes one after you've forgotten it several times."
+        case .gold: return "No gold cards yet. Rate a card with the star in its corner while you practise."
+        case .bad: return "Nothing rated bad. Rate a card with the star in its corner while you practise."
+        }
     }
 }
 

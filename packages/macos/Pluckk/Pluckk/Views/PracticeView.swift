@@ -41,6 +41,14 @@ enum CardImageChange {
 @MainActor
 final class PracticeSession: ObservableObject {
     static let shared = PracticeSession()
+    /// The Decks page's own session: a deck's cards shown one at a time under the grid.
+    static let browse = PracticeSession(host: .decks)
+
+    /// The page this session is shown on; its keys work only there.
+    let host: PanelView
+    /// A card was deleted from this session, or a delete undone (the Decks grid follows along).
+    var onCardDeleted: ((String) -> Void)?
+    var onCardRestored: (() -> Void)?
 
     enum Phase { case idle, loading, reviewing, done, failed(String) }
 
@@ -79,7 +87,7 @@ final class PracticeSession: ObservableObject {
         if history.count > historyLimit { history.removeFirst() }
     }
 
-    private init() {}
+    private init(host: PanelView = .practice) { self.host = host }
 
     func startIfNeeded() {
         if case .idle = phase { start() }
@@ -155,6 +163,7 @@ final class PracticeSession: ObservableObject {
     // MARK: Changes made elsewhere (the assistant), so the queue doesn't show stale cards
 
     func applyExternalEdit(cardId: String, question: String?, answer: String?, sourceURL: String? = nil) {
+        if self === Self.shared { Self.browse.applyExternalEdit(cardId: cardId, question: question, answer: answer, sourceURL: sourceURL) }
         for i in queue.indices where queue[i].card_id == cardId {
             if let question { queue[i].question = question }
             if let answer { queue[i].answer = answer }
@@ -163,19 +172,23 @@ final class PracticeSession: ObservableObject {
     }
 
     func applyExternalImage(cardId: String, url: String) {
+        if self === Self.shared { Self.browse.applyExternalImage(cardId: cardId, url: url) }
         for i in queue.indices where queue[i].card_id == cardId { queue[i].image_url = url }
     }
 
     func applyExternalTags(cardId: String, tags: [String]) {
+        if self === Self.shared { Self.browse.applyExternalTags(cardId: cardId, tags: tags) }
         for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
     }
 
     func applyExternalWikipedia(cardId: String, title: String?) {
+        if self === Self.shared { Self.browse.applyExternalWikipedia(cardId: cardId, title: title) }
         for i in queue.indices where queue[i].card_id == cardId { queue[i].wikipedia = title }
     }
 
     func removeCardExternally(_ cardId: String) {
-        guard index <= queue.count else { return }
+        if self === Self.shared { Self.browse.removeCardExternally(cardId) }
+        guard index <= queue.count, queue.contains(where: { $0.card_id == cardId }) else { return }
         let wasCurrent = current?.card_id == cardId
         queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != cardId }
         if wasCurrent { advance() }
@@ -217,6 +230,47 @@ final class PracticeSession: ObservableObject {
         focusDeck = nil
         timesUp = false
         start()
+    }
+
+    // MARK: Looking through a deck's cards one at a time (the Decks page)
+
+    private var startAtCard: String?
+    private var editOnOpen = false
+
+    /// Show these cards as practice cards, opening on one of them. Ratings are logged but leave
+    /// due dates alone, as in any practice run.
+    func browse(title: String, cardIds: [String], startAt: String, editing: Bool = false) {
+        if case .reviewing = phase, practiceRun != nil, let i = queue.firstIndex(where: { $0.card_id == startAt }) {
+            goTo(i)
+            if editing { beginEdit() }
+            return
+        }
+        startAtCard = startAt
+        editOnOpen = editing
+        practise(PracticeRun(title: title, cardIds: cardIds))
+    }
+
+    func closeBrowse() {
+        practiceRun = nil
+        queue = []
+        index = 0
+        history = []
+        editing = false
+        revealed = false
+        phase = .idle
+    }
+
+    /// The next or previous card, without rating this one.
+    func step(_ by: Int) {
+        guard !busy, !editing, case .reviewing = phase else { return }
+        let i = index + by
+        guard i >= 0, i < queue.count else { return }
+        goTo(i)
+    }
+
+    private func goTo(_ i: Int) {
+        index = i
+        advance()
     }
 
     /// After a deal comes back empty: offer new cards past today's limits.
@@ -284,13 +338,15 @@ final class PracticeSession: ObservableObject {
                     items = try await dealScheduled(token: token, focus: focus, ahead: ahead)
                 }
                 queue = items
-                index = 0
+                index = startAtCard.flatMap { id in items.firstIndex { $0.card_id == id } } ?? 0
+                startAtCard = nil
                 reviewedCount = 0
                 revealed = false
                 editing = false
                 history = []
                 shownAt = Date()
                 phase = items.isEmpty ? .done : .reviewing
+                if editOnOpen { editOnOpen = false; beginEdit() }
                 if items.isEmpty && run == nil { aheadState = ahead == nil ? .offer : .noneLeft }
                 refreshTodayCounts()
             } catch {
@@ -342,12 +398,13 @@ final class PracticeSession: ObservableObject {
                 tv.deleteBackward(nil)
                 return nil
             }
-            guard let self, AppState.shared.currentView == .practice,
+            guard let self, AppState.shared.currentView == self.host,
                   let panel = PluckkPanel.shared, panel.isExpanded, event.window === panel.hostWindow,
                   !self.editing, !self.timesUp, case .reviewing = self.phase else { return event }
             // The assistant's box is the only editor left on this screen. While it's blank the
             // keys still belong to the card, so Space and 1–5 carry on after asking something.
             if let tv = panel.hostWindow.firstResponder as? NSTextView, tv.isEditable {
+                guard self.host == .practice else { return event }     // on Decks, typing (the search box) is typing
                 let blank = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 let answering = self.current?.answersFirst == true && !self.revealed   // typing a range or blanks
                 guard blank, !answering, [49, 18, 19, 20, 21, 23, 123].contains(event.keyCode) else { return event }
@@ -367,7 +424,11 @@ final class PracticeSession: ObservableObject {
                 guard self.revealed else { handled = false; break }
                 let rating: ReviewRating = [18: .again, 19: .hard, 20: .good, 21: .easy, 23: .trivial][event.keyCode]!
                 self.rate(rating)
-            case 123, 6:                                // ← or Z
+            case 123:                                   // ←: back (on Decks, the previous card)
+                if self.host == .decks { self.step(-1) } else { self.undo() }
+            case 124:                                   // →: on Decks, the next card
+                if self.host == .decks { self.step(1) } else { handled = false }
+            case 6:                                     // Z
                 self.undo()
             case 13:                                    // W: Wikipedia on the card, once it's revealed
                 guard self.revealed else { handled = false; break }
@@ -398,6 +459,7 @@ final class PracticeSession: ObservableObject {
     }
 
     private func startSprintIfIdle() {
+        guard host == .practice else { return }
         if !SessionTimer.shared.isRunning && !autoStartSuppressed && !timesUp {
             SessionTimer.shared.start()
         }
@@ -609,6 +671,7 @@ final class PracticeSession: ObservableObject {
                     queue.insert(contentsOf: removed, at: i)
                     index = i
                     revealed = false
+                    onCardRestored?()
                 }
                 history.removeLast()
                 timesUp = false
@@ -637,6 +700,7 @@ final class PracticeSession: ObservableObject {
     /// Fetch a card again after it was edited elsewhere (the editor, the assistant), so the queue
     /// shows its new modules, answer type and text.
     func reloadItem(_ cardId: String) async {
+        if self === Self.shared { await Self.browse.reloadItem(cardId) }
         guard let token = AuthManager.shared.accessToken,
               let data = try? await PluckkAPI.shared.raw(token: token, method: "POST", path: "/api/v1/review/items",
                                                           json: ["items": queue.filter { $0.card_id == cardId }.map { ["card_id": $0.card_id, "component_id": $0.component_id] }]),
@@ -730,6 +794,38 @@ final class PracticeSession: ObservableObject {
         }
     }
 
+    /// Rate the current card as a question, mark what's wrong with it, or note something about
+    /// it (see CardQuality.swift). Shown at once; put back if it can't be saved.
+    func setAssessment(tags: [String]? = nil, note: String? = nil) {
+        guard let item = current, let token = AuthManager.shared.accessToken else { return }
+        let cardId = item.card_id
+        func show(tags: [String]?, note: String??) {
+            for i in queue.indices where queue[i].card_id == cardId {
+                if let tags { queue[i].tags = tags }
+                if let note { queue[i].note = note }
+            }
+        }
+        show(tags: tags, note: note.map { $0.isEmpty ? nil : $0 })
+        notice = nil
+        Task {
+            do {
+                try await PluckkAPI.shared.setAssessment(token: token, cardId: cardId, tags: tags, note: note)
+                if let tags {
+                    // The other session, if it holds this card too.
+                    (self === Self.browse ? Self.shared : Self.browse).applyTags(cardId: cardId, tags: tags)
+                    NotificationCenter.default.post(name: .pluckkCardRated, object: cardId, userInfo: ["tags": tags])
+                }
+            } catch {
+                show(tags: tags == nil ? nil : (item.tags ?? []), note: note == nil ? nil : .some(item.note))
+                notice = "Couldn't save that: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func applyTags(cardId: String, tags: [String]) {
+        for i in queue.indices where queue[i].card_id == cardId { queue[i].tags = tags }
+    }
+
     /// Flag (or unflag) the current card for later reworking; it stays in the session.
     func toggleRework() {
         guard let item = current, !busy, let token = AuthManager.shared.accessToken else { return }
@@ -759,6 +855,7 @@ final class PracticeSession: ObservableObject {
                 let removed = queue[index...].filter { $0.card_id == item.card_id }
                 queue = Array(queue[..<index]) + queue[index...].filter { $0.card_id != item.card_id }
                 if let eventId { remember(.deletion(eventId: eventId, index: index, removed: removed)) }
+                onCardDeleted?(item.card_id)
                 advance()
                 refreshTodayCounts()
             } catch {
@@ -793,7 +890,16 @@ final class PracticeSession: ObservableObject {
 // MARK: - View
 
 struct PracticeView: View {
-    @ObservedObject private var session = PracticeSession.shared
+    @ObservedObject private var session: PracticeSession
+    /// Under the Decks grid: a deck's cards one at a time, with next, previous and close.
+    private let embedded: Bool
+    private let onClose: () -> Void
+
+    init(session: PracticeSession = .shared, embedded: Bool = false, onClose: @escaping () -> Void = {}) {
+        _session = ObservedObject(wrappedValue: session)
+        self.embedded = embedded
+        self.onClose = onClose
+    }
     @Environment(\.colorScheme) private var colorScheme
     /// The image shown full-panel after clicking it on the card.
     @State private var zoomed: URL?
@@ -846,7 +952,7 @@ struct PracticeView: View {
         .overlay { if let zoomed { lightbox(zoomed) } }
         .onAppear {
             session.installKeyMonitor()
-            session.startIfNeeded()
+            if !embedded { session.startIfNeeded() }
         }
         .onChange(of: session.current?.id) { _ in
             zoomed = nil
@@ -947,7 +1053,35 @@ struct PracticeView: View {
         .padding(.top, 10)
     }
 
-    private func header(_ item: ReviewItem) -> some View {
+    @ViewBuilder private func header(_ item: ReviewItem) -> some View {
+        if embedded { browseHeader(item) } else { sessionHeader(item) }
+    }
+
+    /// Where you are in the deck, and the way to the next card, the previous one, and out.
+    private func browseHeader(_ item: ReviewItem) -> some View {
+        HStack(spacing: 8) {
+            Text("\(session.index + 1) of \(session.queue.count)")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundColor(PluckkTheme.accent)
+            if let deck = item.folder?.name {
+                Text(deck.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundColor(mutedText)
+            }
+            Text("Ratings here leave the schedule as it is").font(.system(size: 10)).foregroundColor(mutedText)
+            Spacer()
+            CardIconButton(systemName: "chevron.left", help: "Previous card (←)") { session.step(-1) }
+                .disabled(session.index == 0 || session.editing)
+            CardIconButton(systemName: "chevron.right", help: "Next card (→)") { session.step(1) }
+                .disabled(session.index >= session.queue.count - 1 || session.editing)
+            CardIconButton(systemName: "xmark", help: "Close") { closeEmbedded() }
+        }
+        .padding(.horizontal, 22)
+    }
+
+    private func closeEmbedded() {
+        session.closeBrowse()
+        onClose()
+    }
+
+    private func sessionHeader(_ item: ReviewItem) -> some View {
         HStack(spacing: 8) {
             if let run = session.practiceRun {
                 FocusDeckChip(title: run.title, note: "schedule unchanged") { session.leaveDeck() }
@@ -1184,14 +1318,10 @@ struct PracticeView: View {
         } else {
             HStack(spacing: 2) {
                 if let id = session.current?.card_id { CopyCardIDButton(cardId: id) }
-                let marked = session.current?.isMarkedForRework == true
-                CardIconButton(systemName: marked ? "flag.fill" : "flag",
-                               help: marked ? "Marked for rework (click to unmark)" : "Mark for rework",
-                               hoverTint: PluckkTheme.Dark.warning,
-                               tint: marked ? PluckkTheme.Dark.warning : nil) {
-                    session.toggleRework()
-                }
-                .disabled(session.busy)
+                CardQualityButton(tags: session.current?.tags, note: session.current?.note,
+                                  onTags: { session.setAssessment(tags: $0) },
+                                  onNote: { session.setAssessment(note: $0) })
+                    .id(session.current?.card_id)
                 CardIconButton(systemName: "pencil",
                                help: session.canEditCurrent ? "Edit card" : "Two-way and list cards are edited in the web app") {
                     beginEditing()
@@ -1458,7 +1588,24 @@ struct PracticeView: View {
 
     // MARK: Done
 
-    private var doneState: some View {
+    @ViewBuilder private var doneState: some View {
+        if embedded {
+            centered {
+                VStack(spacing: 12) {
+                    Text("That's the last of these cards").font(.system(size: 14, weight: .semibold)).foregroundColor(primaryText)
+                    HStack(spacing: 10) {
+                        if session.canUndo { Button("Undo last") { session.undo() }.buttonStyle(PillButtonStyle(prominent: false)) }
+                        Button("Close") { closeEmbedded() }.buttonStyle(PillButtonStyle(prominent: true))
+                    }
+                }
+                .padding(20)
+            }
+        } else {
+            sessionDone
+        }
+    }
+
+    private var sessionDone: some View {
         centered {
             VStack(spacing: 14) {
                 Image(systemName: "checkmark.circle")

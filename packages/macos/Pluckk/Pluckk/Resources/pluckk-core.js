@@ -394,6 +394,7 @@
       numeric_unit: numeric?.unit ?? null,
       answer_mode: simple ? spec.answerType ?? "text" : "text",
       modules: simple && spec.modules ? withSources(spec.modules, snap2.userModuleBase) : null,
+      ..."note" in spec && spec.note ? { note: spec.note } : {},
       folder: card.folderId ? { id: card.folderId, name: card.folderName } : null,
       is_new: !stateRow || stateRow.status === "new",
       previews: defaultScheduler.preview(state, now)

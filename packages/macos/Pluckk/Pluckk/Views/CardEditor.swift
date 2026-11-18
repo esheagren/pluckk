@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     /// A card changed outside the editor (the assistant, mostly); object is the card id.
     static let pluckkCardChanged = Notification.Name("PluckkCardChanged")
+    /// A card's rating, issue markers or flag changed in Practice; userInfo["tags"] has its tags.
+    static let pluckkCardRated = Notification.Name("PluckkCardRated")
 }
 
 /// The one card editor, used on the Decks page and in Practice. How a card is answered is a short

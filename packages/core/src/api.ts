@@ -37,6 +37,9 @@ export const modulesSchema = z.object({
 /** A card's Wikipedia article: its exact title; null when there's none that fits. */
 export const wikipediaSchema = z.string().trim().min(1).max(300).nullish();
 
+/** The owner's own note about a card (why it's good, what's wrong with it); null clears it. */
+export const noteSchema = z.string().trim().max(2000).nullish();
+
 /** Card spec, wire form (camelCase inside the spec object — it is stored as JSON verbatim). */
 export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style', [
   z.object({
@@ -48,9 +51,10 @@ export const cardSpecSchema: z.ZodType<CardSpec> = z.discriminatedUnion('style',
     numeric: numericSchema.nullish(),
     modules: modulesSchema.nullish(),
     wikipedia: wikipediaSchema,
+    note: noteSchema,
   }),
-  z.object({ style: z.literal('qa_bidirectional'), forward: qaSchema, reverse: qaSchema, wikipedia: wikipediaSchema }),
-  z.object({ style: z.literal('cloze_list'), listName: z.string(), items: z.array(z.string()), prompts: z.array(qaSchema).min(1), wikipedia: wikipediaSchema }),
+  z.object({ style: z.literal('qa_bidirectional'), forward: qaSchema, reverse: qaSchema, wikipedia: wikipediaSchema, note: noteSchema }),
+  z.object({ style: z.literal('cloze_list'), listName: z.string(), items: z.array(z.string()), prompts: z.array(qaSchema).min(1), wikipedia: wikipediaSchema, note: noteSchema }),
 ]) as z.ZodType<CardSpec>;
 
 export const textQuoteSelectorSchema = z.object({
@@ -122,6 +126,8 @@ export const patchCardBodySchema = z.object({
   modules: modulesSchema.nullish(),
   // The card's Wikipedia article (any style of card); null: none fits.
   wikipedia: wikipediaSchema,
+  // The owner's note about the card (any style); null or "" clears it.
+  note: noteSchema,
 });
 export type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 

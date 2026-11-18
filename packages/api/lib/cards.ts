@@ -22,12 +22,19 @@ export class CardError extends Error {
 // ---------------------------------------------------------------- request → core values
 
 export function specFromBody(b: CreateCardBody | PatchCardBody, current?: CardSpec | null): CardSpec | null {
-  const spec = specFromFields(b, current);
-  // The Wikipedia article: the body's when it names one (null: none fits), else the card's own,
-  // so an edit to the words doesn't drop it.
-  if (spec && 'wikipedia' in b && b.wikipedia !== undefined) return { ...spec, wikipedia: b.wikipedia };
-  if (spec && !('wikipedia' in spec) && current && 'wikipedia' in current) return { ...spec, wikipedia: current.wikipedia };
-  if (!spec && current && 'wikipedia' in b && b.wikipedia !== undefined) return { ...current, wikipedia: b.wikipedia };
+  // Two things ride along on any spec: the Wikipedia article and the owner's note. Each is the
+  // body's when it names one (null: none), else the card's own, so an edit to the words keeps it.
+  let spec = specFromFields(b, current) as (CardSpec & Record<string, unknown>) | null;
+  const had = (current ?? null) as (CardSpec & Record<string, unknown>) | null;
+  for (const key of ['wikipedia', 'note'] as const) {
+    const given = (b as Record<string, unknown>)[key];
+    if (given !== undefined) {
+      const base = spec ?? had;
+      if (base) spec = { ...base, [key]: key === 'note' && given === '' ? null : given };
+    } else if (spec && !(key in spec) && had && key in had) {
+      spec = { ...spec, [key]: had[key] };
+    }
+  }
   return spec;
 }
 

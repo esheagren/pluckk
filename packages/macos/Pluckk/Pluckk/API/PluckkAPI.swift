@@ -472,6 +472,15 @@ class PluckkAPI {
     }
 
     /// Replace a card's tags.
+    /// A card's rating and issue markers (tags) and its note; either can be left as it is.
+    func setAssessment(token: String, cardId: String, tags: [String]?, note: String?) async throws {
+        var body: [String: Any] = [:]
+        if let tags { body["tags"] = tags }
+        if let note { body["note"] = note }
+        guard !body.isEmpty else { return }
+        _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: body)
+    }
+
     func setTags(token: String, cardId: String, tags: [String]) async throws {
         _ = try await send(token: token, method: "PATCH", path: "/api/v1/cards/\(cardId)", json: ["tags": tags])
     }
@@ -659,6 +668,8 @@ struct ReviewItem: Decodable, Identifiable {
     var modules: CardModules?
     /// The card's Wikipedia article (exact title), when one has been chosen.
     var wikipedia: String?
+    /// The owner's note about the card (see CardQuality.swift).
+    var note: String?
 
     struct Provenance: Decodable {
         let identifier: String?
