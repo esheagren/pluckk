@@ -1,5 +1,27 @@
 import Foundation
 
+/// The Python that runs the embedding model. Pluckk keeps its own environment in Application
+/// Support (python-env; see scripts/setup-embedding-env.sh), away from iCloud Drive. The bookshelf
+/// corpus's .venv is the fallback, but it usually sits in ~/Documents, where iCloud offloads files
+/// and a process that needs one waits on the download, so every run also has a time limit.
+enum EmbeddingPython {
+    static func executable(corpusRoot: String?) -> String? {
+        let own = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Pluckk/python-env/bin/python").path
+        if FileManager.default.isExecutableFile(atPath: own) { return own }
+        guard let corpusRoot else { return nil }
+        let shared = (corpusRoot as NSString).appendingPathComponent(".venv/bin/python")
+        return FileManager.default.isExecutableFile(atPath: shared) ? shared : nil
+    }
+
+    /// Stop the process if it's still going after `seconds`. Cancel the returned item once it has exited.
+    static func limit(_ process: Process, seconds: Double) -> DispatchWorkItem {
+        let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: stop)
+        return stop
+    }
+}
+
 /// New cards go into the nearest topic deck. The decks were made by clustering card embeddings
 /// (deck-centroids.json in Application Support); a card with no deck is embedded on this Mac with
 /// the same model, using the bookshelf corpus's Python, and moved to the deck it's closest to. Runs
@@ -24,10 +46,9 @@ final class DeckFiler {
 
     func run() {
         let centroids = Self.support.appendingPathComponent("deck-centroids.json")
-        guard !running, let token = AuthManager.shared.accessToken, let root = BookLibrary.root,
-              FileManager.default.fileExists(atPath: centroids.path) else { return }
-        let python = (root as NSString).appendingPathComponent(".venv/bin/python")
-        guard FileManager.default.isExecutableFile(atPath: python) else { return }
+        guard !running, let token = AuthManager.shared.accessToken,
+              FileManager.default.fileExists(atPath: centroids.path),
+              let python = EmbeddingPython.executable(corpusRoot: BookLibrary.root) else { return }
         running = true
         Task {
             defer { running = false }
@@ -47,8 +68,11 @@ final class DeckFiler {
                 process.standardOutput = pipe
                 process.standardError = pipe
                 guard (try? process.run()) != nil else { return "couldn't start python" }
+                let limit = EmbeddingPython.limit(process, seconds: 300)
                 let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 process.waitUntilExit()
+                limit.cancel()
+                if process.terminationReason == .uncaughtSignal { return "stopped: took longer than 5 minutes" }
                 return text
             }.value
             let log = Self.support.appendingPathComponent("deck-filer.log")
@@ -124,8 +148,9 @@ enum RelatedCards {
     struct Match: Decodable { let id: String; let score: Double }
 
     static func search(query: String?, cardId: String?, among cards: [[String: Any]], limit: Int) async throws -> [Match] {
-        guard let root = await BookLibrary.root else { throw Failure("The bookshelf corpus, whose Python runs the embedding model, isn't set up.") }
-        let python = (root as NSString).appendingPathComponent(".venv/bin/python")
+        guard let python = EmbeddingPython.executable(corpusRoot: await BookLibrary.root) else {
+            throw Failure("The embedding model's Python isn't set up (see scripts/setup-embedding-env.sh).")
+        }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Pluckk", isDirectory: true)
         let script = support.appendingPathComponent("related-cards.py")
@@ -146,10 +171,15 @@ enum RelatedCards {
             process.standardOutput = stdout
             process.standardError = FileHandle.nullDevice
             try process.run()
+            let limit = EmbeddingPython.limit(process, seconds: 120)
             stdin.fileHandleForWriting.write(input)
             try stdin.fileHandleForWriting.close()
             let data = stdout.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            limit.cancel()
+            if process.terminationReason == .uncaughtSignal {
+                throw Failure("The embedding search took more than two minutes and was stopped. Search by words instead.")
+            }
             return data
         }.value
         guard let last = String(decoding: output, as: UTF8.self).split(separator: "\n").last,
